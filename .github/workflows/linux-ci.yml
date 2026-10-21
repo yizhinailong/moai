@@ -1,0 +1,140 @@
+name: Linux CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: linux-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Linux x64 ${{ matrix.profile }} build and test
+    if: ${{ !github.event.deleted }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [dev, sanitize]
+    env:
+      ASAN_OPTIONS: detect_leaks=1:strict_string_checks=1
+      UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up Python for TOML parsing
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: '3.13'
+
+      - name: Verify tag matches package version
+        if: github.ref_type == 'tag'
+        shell: python
+        run: |
+          import os
+          import tomllib
+
+          with open("mcpp.toml", "rb") as manifest:
+              version = tomllib.load(manifest)["package"]["version"]
+          expected = f"v{version}"
+          actual = os.environ["GITHUB_REF_NAME"]
+          if actual != expected:
+              raise ValueError(f"Tag {actual} must match package version {expected}")
+          print(f"Verified {actual} matches [package].version.")
+
+      - name: Install mcpp
+        run: |
+          mcpp_version='2026.10.19.1'
+          mcpp_sha256='b9b83298c243a024bf9720f303d4d542958d7d8d9aea604d996039af2546c8a8'
+          archive_name="mcpp-$mcpp_version-linux-x86_64"
+          archive_path="$RUNNER_TEMP/$archive_name.tar.gz"
+          install_root="$RUNNER_TEMP/$archive_name"
+
+          curl --fail --location --retry 3 \
+            "https://github.com/mcpp-community/mcpp/releases/download/v$mcpp_version/$archive_name.tar.gz" \
+            --output "$archive_path"
+          printf '%s  %s\n' "$mcpp_sha256" "$archive_path" | sha256sum --check
+          tar -xzf "$archive_path" -C "$RUNNER_TEMP"
+          test -x "$install_root/bin/mcpp"
+
+          # Keep the bundled registry/bin/xlings in this isolated MCPP_HOME.
+          export MCPP_HOME="$install_root"
+          export PATH="$install_root/bin:$PATH"
+          printf 'MCPP_HOME=%s\n' "$install_root" >> "$GITHUB_ENV"
+          printf '%s\n' "$install_root/bin" >> "$GITHUB_PATH"
+          "$install_root/bin/mcpp" --version
+
+      - name: Install LLVM toolchain
+        run: mcpp toolchain install llvm 23.1.3
+
+      - name: Select LLVM toolchain
+        run: mcpp toolchain default llvm@23.1.3
+
+      - name: Build
+        run: mcpp build --profile ${{ matrix.profile }}
+
+      - name: Verify TLS fixture dependencies
+        run: |
+          openssl version
+          python3 -c 'import ssl; print(ssl.OPENSSL_VERSION)'
+
+      - name: Test
+        run: |
+          set -o pipefail
+          mcpp test --profile ${{ matrix.profile }} --timeout 90 | tee "$RUNNER_TEMP/mcr-tests.log"
+          grep -F 'test_ssl_options: verified HTTPS and mutual TLS file/blob paths' "$RUNNER_TEMP/mcr-tests.log"
+
+      - name: Build request examples
+        if: matrix.profile == 'dev'
+        working-directory: example
+        run: mcpp build
+
+      - name: Verify all request examples
+        if: matrix.profile == 'dev'
+        working-directory: example
+        shell: python
+        run: |
+          import pathlib
+          import subprocess
+          import sys
+          import tomllib
+
+          with open("mcpp.toml", "rb") as manifest:
+              targets = tomllib.load(manifest)["targets"]
+          candidates = [directory for directory in pathlib.Path("target").glob("*/*/bin")
+                        if all((directory / name).is_file() for name in targets)]
+          if len(candidates) != 1:
+              raise RuntimeError(f"Expected one complete example build, found {candidates}")
+          subprocess.run([sys.executable, "scripts/verify.py", "--bin-dir", str(candidates[0])], check=True)
+
+      - name: Package release
+        if: github.ref_type == 'tag' && matrix.profile == 'dev'
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          archive="$RUNNER_TEMP/mcr-$version-linux-x64.tar.gz"
+          mcpp pack --release -o "$archive"
+          test -f "$archive"
+
+      - name: Upload package
+        if: github.ref_type == 'tag' && matrix.profile == 'dev'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: mcr-linux-x64
+          path: ${{ runner.temp }}/mcr-*-linux-x64.tar.gz
+          if-no-files-found: error
+          retention-days: 7

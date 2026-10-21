@@ -1,0 +1,93 @@
+/**
+ * @file build.mcpp
+ * @brief Generate the public version module from package metadata.
+ */
+import std;
+import mcpp;
+
+/**
+ * @brief Read this package's quoted version field.
+ * @param path Manifest path.
+ * @return Version text.
+ * @throws std::runtime_error If missing or malformed.
+ */
+auto read_version(std::filesystem::path const& path) -> std::string {
+    std::ifstream input{ path };
+    if (!input) {
+        throw std::runtime_error{ "Cannot read mcpp.toml." };
+    }
+    std::regex const section{ R"(^\s*\[([^\]]+)\]\s*(?:#.*)?$)" };
+    std::regex const version{ R"regex(^\s*version\s*=\s*["']([0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.+-]+)?)["']\s*(?:#.*)?$)regex" };
+    bool             package{ false };
+    std::string      line;
+    std::smatch      match;
+    while (std::getline(input, line)) {
+        if (std::regex_match(line, match, section)) {
+            package = match[1] == "package";
+        } else if (package && std::regex_match(line, match, version)) {
+            return match[1];
+        }
+    }
+    throw std::runtime_error{ "Expected a quoted major.minor.patch [package].version in mcpp.toml." };
+}
+
+/**
+ * @brief Emit a generated module in mcpp's output directory.
+ * @return Zero on success.
+ */
+auto main() -> int {
+    try {
+        auto const manifest{ std::filesystem::path{ mcpp::manifest_dir() } / "mcpp.toml" };
+        mcpp::rerun_if_changed(manifest.string().c_str());
+        auto const              version{ read_version(manifest) };
+        std::array<unsigned, 3> parts{};
+        std::string_view        remaining{ version };
+        for (std::size_t index{}; index < parts.size(); ++index) {
+            auto const end{ remaining.find_first_of(".-+") };
+            auto const part{ remaining.substr(0, end) };
+            auto const result{ std::from_chars(part.data(), part.data() + part.size(), parts[index]) };
+            if (result.ec != std::errc{} || result.ptr != part.data() + part.size() || parts[index] > 255) {
+                throw std::runtime_error{ "Version components must fit the 0xAABBCC representation." };
+            }
+            if (index < 2) {
+                remaining.remove_prefix(end + 1);
+            }
+        }
+        auto const        output{ std::filesystem::path{ mcpp::out_dir() } / "mcr_version.cppm" };
+        auto const        source{ std::format(R"module(/**
+ * @file mcr_version.cppm
+ * @brief Generated from mcpp.toml; do not edit.
+ */
+module;
+#include <curl/curlver.h>
+export module mcr:version;
+import std;
+export namespace mcr {{
+    inline constexpr std::string_view VERSION{{ "{}" }}; ///< Full package version.
+    inline constexpr unsigned VERSION_MAJOR{{ {} }}; ///< Major version component.
+    inline constexpr unsigned VERSION_MINOR{{ {} }}; ///< Minor version component.
+    inline constexpr unsigned VERSION_PATCH{{ {} }}; ///< Patch version component.
+    inline constexpr unsigned VERSION_NUM{{ (VERSION_MAJOR << 16) | (VERSION_MINOR << 8) | VERSION_PATCH }}; ///< Packed 0xAABBCC version.
+    inline constexpr unsigned CURL_VERSION_NUM{{ LIBCURL_VERSION_NUM }}; ///< Curl headers used to build this library.
+}}
+)module",
+                                              version,
+                                              parts[0],
+                                              parts[1],
+                                              parts[2]) };
+        std::ifstream     existing{ output, std::ios::binary };
+        std::string const previous{ std::istreambuf_iterator<char>{ existing }, {} };
+        existing.close();
+        if (previous != source) {
+            std::ofstream generated{ output, std::ios::binary | std::ios::trunc };
+            generated.exceptions(std::ios::failbit | std::ios::badbit);
+            generated << source;
+            generated.close();
+        }
+        mcpp::generated(output.string().c_str());
+        return 0;
+    } catch (std::exception const& error) {
+        std::println("mcr version generation: {}", error.what());
+        return 1;
+    }
+}
