@@ -82,6 +82,13 @@ namespace moai::detail {
         [[nodiscard]] auto Options() const noexcept -> ClientOptions const& { return m_options; }
 
         /**
+         * @brief Return the shared connection pool for coroutine requests.
+         * @note Copies share the same connection cache; the returned reference remains valid while
+         * the owning shared state is alive.
+         */
+        [[nodiscard]] auto Pool() const noexcept -> mcr::ConnectionPool const& { return m_pool; }
+
+        /**
          * @brief Execute a request with retries and map non-2xx responses to errors.
          * @param request Resource request.
          * @param options Per-request overrides.
@@ -103,6 +110,37 @@ namespace moai::detail {
         ClientOptions m_options;    ///< Resolved options.
         mcr::ConnectionPool m_pool; ///< Shared connections and TLS sessions.
     };
+
+    /**
+     * @brief Execute a buffered request through mcr's coroutine runtime.
+     * @param core Shared client state kept alive by the task.
+     * @param request Resource request, owned by the task.
+     * @param options Per-request overrides, owned by the task.
+     * @return Task yielding the 2xx response or the final error. Retries use non-blocking
+     * exponential backoff; cancellation and runtime shutdown stop the wait immediately.
+     * @note The task may outlive the Client that created it; state is owned by the task.
+     */
+    [[nodiscard]] auto send_coro(
+        std::shared_ptr<ClientCore const> core,
+        ApiRequest request,
+        RequestOptions options
+    ) -> mcr::Task<Result<RawResponse>>;
+
+    /**
+     * @brief Execute a streaming request through mcr's coroutine runtime.
+     * @param core Shared client state kept alive by the task.
+     * @param request Resource request, owned by the task; the body should request streaming.
+     * @param options Per-request overrides, owned by the task.
+     * @param on_event Consumer invoked on the coroutine runtime's I/O thread.
+     * @return Task yielding success after `data: [DONE]` or the first error.
+     * @note Retried only before an event is delivered. The handler must not block the I/O thread.
+     */
+    [[nodiscard]] auto send_stream_coro(
+        std::shared_ptr<ClientCore const> core,
+        ApiRequest request,
+        RequestOptions options,
+        StreamEventHandler on_event
+    ) -> mcr::Task<Result<void>>;
 
     /**
      * @brief Build an error for an HTTP response outside 2xx.

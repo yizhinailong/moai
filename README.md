@@ -1,7 +1,7 @@
 # moai
 
-基于 [mcr 0.3.0](https://github.com/yizhinailong/mcr/tree/v0.3.0) 的 C++23 模块化 OpenAI 客户端库，
-使用 [mcpp](https://github.com/mcpp-community/mcpp) 构建和管理依赖。
+基于 [mcr](https://github.com/yizhinailong/mcr)（0.3.0 及以上，Git `main` 分支）的 C++23
+模块化 OpenAI 客户端库，使用 [mcpp](https://github.com/mcpp-community/mcpp) 构建和管理依赖。
 
 代码组织参考 [liboai](https://github.com/D7EAD/liboai) 的统一客户端、核心层和资源组件，
 功能设计对齐 [OpenAI 官方 SDK](https://developers.openai.com/api/reference/python)
@@ -9,8 +9,8 @@
 
 ## 当前状态
 
-当前版本为 `0.1.0`。已实现核心层和 Chat Completions 的同步调用、SSE 流式及已存储补全的管理接口，
-可以通过 `import moai;` 调用模型。线程池异步和协程接口尚未实现，其他资源也尚未开始。
+当前版本为 `0.1.0`。已实现核心层和 Chat Completions 的同步、线程池异步、协程、SSE 流式
+及已存储补全的管理接口，可以通过 `import moai;` 调用模型。对话历史辅助和其他资源尚未开始。
 
 liboai 已归档，本项目借鉴其代码分层，具体端点和行为以 OpenAI 官方资料为准。
 
@@ -19,7 +19,8 @@ liboai 已归档，本项目借鉴其代码分层，具体端点和行为以 Ope
 | 核心层 | 客户端配置、API key、base URL、环境变量、JSON、错误映射、超时、重试、取消 | 已实现 |
 | Chat Completions | `Create`、`CreateStream`、流式分块合并、工具调用、结构化输出参数、多模态消息 | 已实现 |
 | Chat Completions | 已存储补全的 `Retrieve` / `Update` / `List` / `Delete` / `messages.List` 及分页 | 已实现 |
-| Chat Completions | 线程池异步与协程接口、对话历史辅助 | 待实现 |
+| Chat Completions | 线程池异步 `CreateAsync` / `CreateStreamAsync`，协程 `CreateCoro` / `CreateStreamCoro` | 已实现 |
+| Chat Completions | 对话历史辅助 `Conversation` | 待实现 |
 | 首批扩展 | Models、Responses | 待实现 |
 | 常用资源 | Embeddings、Images、Audio、Files、Uploads、Moderations | 待实现 |
 | 扩展资源 | Conversations、Batches、Fine-tuning、Vector Stores | 待实现 |
@@ -70,6 +71,24 @@ auto result = client->chat.completions.CreateStream(
     });
 ```
 
+线程池异步返回 `std::future`，适合同时提交多个请求：
+
+```cpp
+auto first = client->chat.completions.CreateAsync(params);
+auto second = client->chat.completions.CreateAsync(params);
+if (first && second) {
+    auto completion = first->get(); // 另一个 future 可稍后取回
+}
+```
+
+协程接口返回 `mcr::Task`，需要 `import mcr;` 才能等待或取消：
+
+```cpp
+auto task = client->chat.completions.CreateCoro(params);
+auto source = task.GetStopSource(); // 可从其他线程 request_stop()
+auto completion = mcr::sync_wait(std::move(task));
+```
+
 要点：
 
 - **配置**：`ClientOptions` 可设置 `api_key`、`organization`、`project`、`base_url`、`timeout`
@@ -86,12 +105,18 @@ auto result = client->chat.completions.CreateStream(
   `retry-after-ms` 和 `retry-after`，否则按 0.5 s 起的指数退避；流式请求只在交付首个分块前重试。
 - **线程**：`Client` 创建后配置不可变，可复制，可在多个线程中并发使用；每个请求使用独立的 mcr
   Session，并共享连接池。
+- **异步与协程**：`CreateAsync` / `CreateStreamAsync` 在线程池工作线程上执行，回调也在该线程；
+  `CreateCoro` / `CreateStreamCoro` 由 mcr 的 curl multi 运行时驱动，流式回调在 I/O 线程执行。
+  协程路径的重试退避使用 `mcr::Coro::ScheduleAfter`，取消会立即中断等待。三种接口的错误和
+  `std::stop_token` 取消语义一致。
 - **curl 生命周期**：moai 不会关闭 libcurl。需要确定的退出清理时，可在 `main()` 开头创建
-  `mcr::GlobalInit` 守卫（需 `import mcr;`），守卫必须比所有客户端和进行中的请求存活更久。
+  `moai::GlobalInit` 守卫（或 `mcr::GlobalInit`），守卫必须比所有客户端、任务和进行中的请求
+  存活更久；最后一个守卫销毁后会永久关闭协程和线程池运行时。
 - **JSON**：自由结构字段（工具参数、JSON Schema、`extra_body`、`raw`）使用 `moai::Json`，
   即 `nlohmann::json`。花括号会构造数组，复制 Json 值时请用 `=` 或圆括号初始化。
 
-完整示例见 [example/](example/)：`chat_basic`、`chat_stream`、`chat_tools`（工具调用循环）。
+完整示例见 [example/](example/)：`chat_basic`、`chat_stream`、`chat_tools`（工具调用循环）、
+`chat_async`（并发线程池请求）、`chat_coro`（协程与确定清理）。
 
 ## 环境与依赖
 
@@ -108,11 +133,12 @@ mcpp toolchain default llvm@23.1.3
 mcpp self doctor
 ```
 
-[mcpp.toml](mcpp.toml) 通过 Git URL 直接引入 mcr 并固定到 `v0.3.0`，JSON 使用 mcpp 索引中的 nlohmann/json：
+[mcpp.toml](mcpp.toml) 通过 Git URL 直接引入 mcr 的 `main` 分支，协程退避依赖该分支中的
+`mcr::Coro::ScheduleAfter` / `ScheduleAt`；JSON 使用 mcpp 索引中的 nlohmann/json：
 
 ```toml
 [dependencies]
-mcr = { git = "https://github.com/yizhinailong/mcr.git", tag = "v0.3.0" }
+mcr = { git = "https://github.com/yizhinailong/mcr.git", branch = "main" }
 
 [dependencies.nlohmann]
 json = "3.12.0"
@@ -124,7 +150,7 @@ json = "3.12.0"
 
 | 依赖 | 版本 | 来源与职责 |
 | --- | --- | --- |
-| mcr | `0.3.0` | 直接 Git 依赖；HTTP、连接池、SSE 解析等传输能力 |
+| mcr | `main`（0.3.0 及以上） | 直接 Git 依赖；HTTP、连接池、SSE 解析、线程池与协程运行时 |
 | nlohmann/json | `3.12.0` | 直接依赖，以 `import nlohmann.json;` 模块形式提供；请求序列化和响应解析 |
 | curl | `8.21.0` | mcr 的传递依赖，由 mcpp 管理 |
 | OpenSSL | `3.5.1` | mcr 在 Linux/macOS 上声明的传递依赖 |
@@ -142,7 +168,8 @@ mcpp test --timeout 90
 ```
 
 测试使用 `tests/fixtures/mock_server.hpp` 中的本地回环 HTTP 服务返回预设响应，覆盖客户端配置、
-请求序列化、响应解码、错误映射、已存储补全、SSE 流式、重试、超时和取消。
+请求序列化、响应解码、错误映射、已存储补全、SSE 流式、重试、超时和取消，以及同步 / 异步 / 协程
+三条路径的一致性和协程定时退避。
 测试不访问外部网络，不需要 OpenAI API key。根项目是库，没有可供 `mcpp run` 执行的默认程序。
 
 生成编辑器编译数据库：
@@ -188,9 +215,10 @@ moai/
 │   ├── core/
 │   │   ├── config.cppm             # moai:config，ClientOptions、RequestOptions
 │   │   ├── error.cppm              # moai:error，Error、ErrorKind、Result
+│   │   ├── global_init.cppm        # moai:global_init，可选的进程级 curl / 运行时守卫
 │   │   ├── json.cppm               # moai:json，Json 别名及内部解码辅助
 │   │   ├── pagination.cppm         # moai:pagination，CursorPage
-│   │   ├── transport.cppm / .cpp   # moai:transport（内部），mcr 请求、重试、错误映射、SSE
+│   │   ├── transport.cppm / .cpp   # moai:transport（内部），mcr 同步/异步/协程请求、重试、错误映射、SSE
 │   └── components/chat/
 │       ├── types.cppm / .cpp       # moai:chat_types，请求/响应类型及序列化
 │       ├── completions.cppm / .cpp # moai:chat_completions，Chat Completions 资源

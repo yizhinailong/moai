@@ -3,15 +3,15 @@
 ## 项目定位
 
 moai 是基于 C++23 模块的非官方 OpenAI 客户端库，使用 mcpp 构建，以
-[mcr v0.3.0](https://github.com/yizhinailong/mcr/tree/v0.3.0) 为 HTTP 传输层。
+[mcr](https://github.com/yizhinailong/mcr)（`main` 分支，0.3.0 及以上）为 HTTP 传输层。
 公开入口为 `import moai;`，命名空间为 `moai`。
 
 - 代码组织参考 [liboai](https://github.com/D7EAD/liboai) 的统一入口、`core` 和 `components` 分层。
 - API 功能、参数及行为以 [OpenAI 官方 API](https://developers.openai.com/api/reference/overview)
   和 [官方 Python SDK](https://developers.openai.com/api/reference/python) 为依据。
   liboai 已归档，其历史接口列表不代表当前 OpenAI API。
-- 已实现核心层和 Chat Completions 的同步调用、SSE 流式及已存储补全管理；线程池异步/协程接口和
-  其他资源尚未实现。新增功能后同步更新 README 的状态。
+- 已实现核心层和 Chat Completions 的同步调用、SSE 流式、线程池异步、协程及已存储补全管理；
+  对话历史辅助和其他资源尚未实现。新增功能后同步更新 README 的状态。
 - 首个里程碑是 Chat Completions。开发计划和待办记录在仓库根目录的 `TODO.md`
   （本地文件，被 `.gitignore` 忽略，不提交）；完成任务或调整计划时同步更新它。
 - 使用简体中文编写使用文档；API 名称、命令和程序输出保留原文。
@@ -21,11 +21,12 @@ moai 是基于 C++23 模块的非官方 OpenAI 客户端库，使用 mcpp 构建
 - 唯一项目构建入口是 `mcpp.toml`，不另建 CMake 或 xmake 配置。
 - 当前 CI 固定 mcpp `2026.10.21.1`、LLVM `23.1.3`，覆盖 Windows 和 Linux。
   Windows 还需要 MSVC 工具及 Windows SDK；Linux 的 `sanitize` 配置启用 ASan/UBSan。
-- mcr 必须使用 Git URL 和固定标签声明：
+- mcr 使用 Git URL 声明 `main` 分支；协程重试退避依赖该分支的
+  `mcr::Coro::ScheduleAfter` / `ScheduleAt`，发布前再改为固定标签：
 
   ```toml
   [dependencies]
-  mcr = { git = "https://github.com/yizhinailong/mcr.git", tag = "v0.3.0" }
+  mcr = { git = "https://github.com/yizhinailong/mcr.git", branch = "main" }
   ```
 
 - 不将 mcr 源码复制进本仓库，也不提交依赖于开发者本机目录的 mcr `path` 配置。
@@ -43,14 +44,17 @@ moai 是基于 C++23 模块的非官方 OpenAI 客户端库，使用 mcpp 构建
 - `src/moai.cppm`：公开模块总入口，重新导出公开分区。
 - `src/client.cppm`（`moai:client`）：统一客户端 `moai::Client`，挂载各资源组件。
 - `src/core/`：`config`（`ClientOptions`、`RequestOptions`）、`error`（`Error`、`ErrorKind`、`Result`）、
-  `json`（`Json` 别名及内部 `JsonReader`）、`pagination`（`CursorPage`），以及内部分区 `transport`：
-  `transport.cppm` 声明、`transport.cpp` 实现 mcr 请求、重试、错误映射和 SSE，不由 `moai.cppm` 重新导出。
+  `global_init`（可选的进程级 `mcr::GlobalInit` 包装）、`json`（`Json` 别名及内部 `JsonReader`）、
+  `pagination`（`CursorPage`），以及内部分区 `transport`：`transport.cppm` 声明、`transport.cpp`
+  实现 mcr 同步 / 异步 / 协程请求、重试、错误映射和 SSE，不由 `moai.cppm` 重新导出。
 - `src/components/chat/`：`types`（请求/响应类型，序列化在 `types.cpp`）、`completions`（资源接口）、
   `accumulator`（流式分块合并）。
 - `build.mcpp`：生成 `moai:version`，提供 `moai::VERSION` 等常量。
 - `tests/fixtures/mock_server.hpp`：本地回环 mock 服务（脚本化响应、SSE 分块、延迟、断连）和断言辅助。
-- `tests/test_*.cpp`：依赖集成、客户端配置、Create、已存储补全、流式、重试/超时/取消测试。
-- `example/`：独立消费 moai 的 mcpp 项目（`chat_basic`、`chat_stream`、`chat_tools`）。
+- `tests/test_*.cpp`：依赖集成、客户端配置、Create、已存储补全、流式、重试/超时/取消，
+  以及线程池异步和协程路径。
+- `example/`：独立消费 moai 的 mcpp 项目（`chat_basic`、`chat_stream`、`chat_tools`、
+  `chat_async`、`chat_coro`）。
 
 后续按实际实现增加目录和分区，不提前堆积空文件：新资源放在 `src/components/<resource>/`，
 在 `Client` 上增加对应成员；`docs/` 用于详细中文文档。

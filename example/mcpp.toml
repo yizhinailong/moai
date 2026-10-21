@@ -18,3 +18,11 @@ main = "src/chat_stream.cpp"
 [targets.chat_tools]
 kind = "bin"
 main = "src/chat_tools.cpp"
+
+[targets.chat_async]
+kind = "bin"
+main = "src/chat_async.cpp"
+
+[targets.chat_coro]
+kind = "bin"
+main = "src/chat_coro.cpp"

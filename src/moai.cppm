@@ -8,6 +8,7 @@ export import :version;
 export import :json;
 export import :error;
 export import :config;
+export import :global_init;
 export import :pagination;
 export import :chat_types;
 export import :chat_completions;

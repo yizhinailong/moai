@@ -388,6 +388,52 @@ namespace moai::detail {
         }
 
         /**
+         * @brief Combine default, resource, and per-request query parameters in transmission order.
+         */
+        auto build_parameters(ClientOptions const& config, ApiRequest const& request, RequestOptions const& options) -> mcr::Parameters {
+            mcr::Parameters parameters;
+            for (auto const* list : { &config.default_query, &request.query, &options.extra_query }) {
+                for (auto const& [key, value] : *list) {
+                    parameters.Add(mcr::Parameter{ key, value });
+                }
+            }
+            return parameters;
+        }
+
+        /**
+         * @brief Build the final request headers, applying default then per-request overrides.
+         * @param stream Whether the request expects an event stream.
+         */
+        auto build_headers(ClientOptions const& config, RequestOptions const& options, bool has_body, bool stream) -> mcr::Header {
+            mcr::Header headers;
+            headers["Authorization"] = "Bearer " + *config.api_key;
+            if (config.organization) {
+                headers["OpenAI-Organization"] = *config.organization;
+            }
+            if (config.project) {
+                headers["OpenAI-Project"] = *config.project;
+            }
+            headers["Accept"] = stream ? "text/event-stream" : "application/json";
+            if (has_body) {
+                headers["Content-Type"] = "application/json";
+            }
+            headers["User-Agent"] = std::format("moai/{}", VERSION);
+            for (auto const* extra : { &config.default_headers, &options.extra_headers }) {
+                for (auto const& [name, value] : *extra) {
+                    headers.insert_or_assign(name, value);
+                }
+            }
+            return headers;
+        }
+
+        /**
+         * @brief Build the absolute request URL.
+         */
+        auto build_url(ClientOptions const& config, ApiRequest const& request) -> mcr::Url {
+            return mcr::Url(*config.base_url + request.path);
+        }
+
+        /**
          * @brief Configure a fresh session for one attempt.
          */
         auto configure(
@@ -399,41 +445,15 @@ namespace moai::detail {
             std::optional<std::string> const& body,
             bool stream
         ) -> Result<void> {
-            if (auto status{ check(session.SetUrl(mcr::Url(*config.base_url + request.path))) }; !status) {
+            if (auto status{ check(session.SetUrl(build_url(config, request))) }; !status) {
                 return status;
             }
-            mcr::Parameters parameters;
-            for (auto const* list : { &config.default_query, &request.query, &options.extra_query }) {
-                for (auto const& [key, value] : *list) {
-                    parameters.Add(mcr::Parameter{ key, value });
-                }
-            }
-            if (auto status{ check(session.SetParameters(std::move(parameters))) }; !status) {
+            if (auto status{ check(session.SetParameters(build_parameters(config, request, options))) }; !status) {
                 return status;
             }
-
-            mcr::Header headers;
-            headers["Authorization"] = "Bearer " + *config.api_key;
-            if (config.organization) {
-                headers["OpenAI-Organization"] = *config.organization;
-            }
-            if (config.project) {
-                headers["OpenAI-Project"] = *config.project;
-            }
-            headers["Accept"] = stream ? "text/event-stream" : "application/json";
-            if (body) {
-                headers["Content-Type"] = "application/json";
-            }
-            headers["User-Agent"] = std::format("moai/{}", VERSION);
-            for (auto const* extra : { &config.default_headers, &options.extra_headers }) {
-                for (auto const& [name, value] : *extra) {
-                    headers.insert_or_assign(name, value);
-                }
-            }
-            if (auto status{ check(session.SetHeader(headers)) }; !status) {
+            if (auto status{ check(session.SetHeader(build_headers(config, options, body.has_value(), stream))) }; !status) {
                 return status;
             }
-
             if (auto status{ check(session.SetTimeout(mcr::options::Timeout(options.timeout.value_or(config.timeout)))) }; !status) {
                 return status;
             }
@@ -598,6 +618,238 @@ namespace moai::detail {
             }
         }
 
+        /**
+         * @brief Build one coroutine request with the same options as the synchronous path.
+         * @param header_callback Optional header consumer used by streaming attempts.
+         * @param write_callback Optional body consumer used by streaming attempts.
+         * @return mcr task yielding the raw response or a setup error.
+         */
+        template <mcr::Method M>
+        auto coro_request_once(
+            ClientOptions const& config,
+            mcr::ConnectionPool const& pool,
+            ApiRequest const& request,
+            RequestOptions const& options,
+            std::optional<std::string> const& body,
+            std::stop_token const& token,
+            mcr::HeaderCallback const* header_callback = nullptr,
+            mcr::WriteCallback const* write_callback = nullptr
+        ) -> mcr::Task<mcr::Result<mcr::Response>> {
+            auto task{ [&] {
+                auto url{ build_url(config, request) };
+                auto parameters{ build_parameters(config, request, options) };
+                auto headers{ build_headers(config, options, body.has_value(), header_callback != nullptr) };
+                auto timeout{ mcr::options::Timeout(options.timeout.value_or(config.timeout)) };
+                auto connect_timeout{ mcr::options::ConnectTimeout(config.connect_timeout) };
+                auto proxies{ mcr::options::Proxies(config.proxies) };
+                auto owned_pool{ pool };
+                if constexpr (M == mcr::Method::Post) {
+                    auto owned_body{ mcr::Body(*body) };
+                    if (header_callback != nullptr) {
+                        return mcr::request_coro<M>(
+                            std::move(url),
+                            std::move(parameters),
+                            std::move(headers),
+                            timeout,
+                            connect_timeout,
+                            std::move(owned_pool),
+                            std::move(proxies),
+                            std::move(owned_body),
+                            *header_callback,
+                            *write_callback
+                        );
+                    }
+                    return mcr::request_coro<M>(
+                        std::move(url),
+                        std::move(parameters),
+                        std::move(headers),
+                        timeout,
+                        connect_timeout,
+                        std::move(owned_pool),
+                        std::move(proxies),
+                        std::move(owned_body)
+                    );
+                } else {
+                    if (header_callback != nullptr) {
+                        return mcr::request_coro<M>(
+                            std::move(url),
+                            std::move(parameters),
+                            std::move(headers),
+                            timeout,
+                            connect_timeout,
+                            std::move(owned_pool),
+                            std::move(proxies),
+                            *header_callback,
+                            *write_callback
+                        );
+                    }
+                    return mcr::request_coro<M>(
+                        std::move(url),
+                        std::move(parameters),
+                        std::move(headers),
+                        timeout,
+                        connect_timeout,
+                        std::move(owned_pool),
+                        std::move(proxies)
+                    );
+                }
+            }() };
+            // Propagate cancellation of the caller's task to the child request task.
+            auto source{ task.GetStopSource() };
+            std::stop_callback propagate{ token, [source]() mutable { source.request_stop(); } };
+            co_return co_await std::move(task);
+        }
+
+        /**
+         * @brief Map a coroutine response to the retry-aware attempt outcome.
+         */
+        auto coro_outcome(mcr::Result<mcr::Response>&& result, std::stop_token const& token) -> Attempt {
+            if (!result) {
+                return Attempt{ .result = std::unexpected{ setup_error(result.error()) } };
+            }
+            auto& response{ *result };
+            auto request_id{ std::string{ header_value(response.header, "x-request-id").value_or(std::string_view{}) } };
+            if (response.error) {
+                auto const cancelled{ token.stop_requested() || response.error.code == mcr::ErrorCode::ABORTED_BY_CALLBACK };
+                auto error{ transport_error(response.error, cancelled) };
+                error.request_id = std::move(request_id);
+                return Attempt{ .result = std::unexpected{ std::move(error) }, .retryable = !cancelled };
+            }
+            if (response.status_code < 200 || response.status_code >= 300) {
+                auto const retryable{ should_retry(response.status_code, response.header) };
+                return Attempt{
+                    .result = std::unexpected{ status_error(response.status_code, std::move(request_id), response.text) },
+                    .retryable = retryable,
+                    .headers = std::move(response.header),
+                };
+            }
+            return Attempt{ .result = RawResponse{
+                                .status_code = response.status_code,
+                                .headers = std::move(response.header),
+                                .body = std::move(response.text),
+                                .request_id = std::move(request_id),
+                            } };
+        }
+
+        /**
+         * @brief Map a coroutine streaming response, preserving buffered non-SSE error bodies.
+         */
+        auto coro_stream_outcome(mcr::Result<mcr::Response>&& result, StreamState& stream, std::stop_token const& token) -> Attempt {
+            if (!result) {
+                return Attempt{ .result = std::unexpected{ setup_error(result.error()) } };
+            }
+            auto& response{ *result };
+            auto request_id{ std::string{ header_value(response.header, "x-request-id").value_or(std::string_view{}) } };
+            if (stream.failure) {
+                auto failure{ std::move(*stream.failure) };
+                failure.status_code = response.status_code;
+                failure.request_id = std::move(request_id);
+                return Attempt{ .result = std::unexpected{ std::move(failure) } };
+            }
+            if (response.error) {
+                auto const cancelled{ token.stop_requested() || response.error.code == mcr::ErrorCode::ABORTED_BY_CALLBACK };
+                auto error{ transport_error(response.error, cancelled) };
+                error.request_id = std::move(request_id);
+                auto const retryable{ !cancelled && stream.delivered == 0 };
+                return Attempt{ .result = std::unexpected{ std::move(error) }, .retryable = retryable };
+            }
+            if (response.status_code < 200 || response.status_code >= 300) {
+                auto const retryable{ should_retry(response.status_code, response.header) };
+                return Attempt{
+                    .result = std::unexpected{ status_error(response.status_code, std::move(request_id), stream.body) },
+                    .retryable = retryable,
+                    .headers = std::move(response.header),
+                };
+            }
+            if (!stream.event_stream) {
+                return Attempt{ .result = std::unexpected{ Error{
+                                    .kind = ErrorKind::Stream,
+                                    .message = std::format("expected text/event-stream, got '{}'", stream.content_type),
+                                    .status_code = response.status_code,
+                                    .request_id = std::move(request_id),
+                                    .body = stream.body.substr(0, MAX_ERROR_BODY),
+                                } } };
+            }
+            if (!stream.done) {
+                return Attempt{ .result = std::unexpected{ Error{
+                                    .kind = ErrorKind::Stream,
+                                    .message = "stream ended before [DONE]",
+                                    .status_code = response.status_code,
+                                    .request_id = std::move(request_id),
+                                } } };
+            }
+            return Attempt{ .result = RawResponse{
+                                .status_code = response.status_code,
+                                .headers = std::move(response.header),
+                                .body = std::move(response.text),
+                                .request_id = std::move(request_id),
+                            } };
+        }
+
+        /**
+         * @brief Run one buffered attempt through the coroutine runtime.
+         */
+        auto coro_attempt(
+            ClientOptions const& config,
+            mcr::ConnectionPool const& pool,
+            ApiRequest const& request,
+            RequestOptions const& options,
+            std::optional<std::string> const& body,
+            std::stop_token const& token
+        ) -> mcr::Task<Attempt> {
+            std::optional<mcr::Result<mcr::Response>> response;
+            switch (request.method) {
+                case HttpMethod::Post:
+                    response.emplace(co_await coro_request_once<mcr::Method::Post>(config, pool, request, options, body, token));
+                    break;
+                case HttpMethod::Delete:
+                    response.emplace(co_await coro_request_once<mcr::Method::Delete>(config, pool, request, options, body, token));
+                    break;
+                case HttpMethod::Get:
+                    response.emplace(co_await coro_request_once<mcr::Method::Get>(config, pool, request, options, body, token));
+                    break;
+            }
+            co_return coro_outcome(std::move(*response), token);
+        }
+
+        /**
+         * @brief Run one streaming attempt through the coroutine runtime.
+         */
+        auto coro_stream_attempt(
+            ClientOptions const& config,
+            mcr::ConnectionPool const& pool,
+            ApiRequest const& request,
+            RequestOptions const& options,
+            std::optional<std::string> const& body,
+            StreamState& stream,
+            std::stop_token const& token
+        ) -> mcr::Task<Attempt> {
+            mcr::HeaderCallback header_callback{ [&stream](std::string_view line, std::intptr_t) {
+                stream.OnHeader(line);
+                return true;
+            } };
+            mcr::WriteCallback write_callback{ [&stream](std::string_view bytes, std::intptr_t) { return stream.OnBody(bytes); } };
+            std::optional<mcr::Result<mcr::Response>> response;
+            switch (request.method) {
+                case HttpMethod::Post:
+                    response.emplace(
+                        co_await coro_request_once<mcr::Method::Post>(config, pool, request, options, body, token, &header_callback, &write_callback)
+                    );
+                    break;
+                case HttpMethod::Delete:
+                    response.emplace(
+                        co_await coro_request_once<mcr::Method::Delete>(config, pool, request, options, body, token, &header_callback, &write_callback)
+                    );
+                    break;
+                case HttpMethod::Get:
+                    response.emplace(
+                        co_await coro_request_once<mcr::Method::Get>(config, pool, request, options, body, token, &header_callback, &write_callback)
+                    );
+                    break;
+            }
+            co_return coro_stream_outcome(std::move(*response), stream, token);
+        }
+
     } // namespace
 
     auto ClientCore::Send(ApiRequest const& request, RequestOptions const& options) const -> Result<RawResponse> {
@@ -610,6 +862,74 @@ namespace moai::detail {
             return std::unexpected{ std::move(result.error()) };
         }
         return {};
+    }
+
+    auto send_coro(std::shared_ptr<ClientCore const> core, ApiRequest request, RequestOptions options) -> mcr::Task<Result<RawResponse>> {
+        auto body{ serialize_body(request, options) };
+        if (!body) {
+            co_return std::unexpected{ std::move(body.error()) };
+        }
+        auto const max_retries{ options.max_retries.value_or(core->Options().max_retries) };
+        auto bridge{ std::stop_source{} };
+        auto const task_token{ co_await mcr::this_coro::stop_token };
+        std::stop_callback task_stop{ task_token, [&bridge] { bridge.request_stop(); } };
+        std::stop_callback option_stop{ options.stop_token, [&bridge] { bridge.request_stop(); } };
+        if (bridge.get_token().stop_requested()) {
+            co_return std::unexpected{ cancelled_error() };
+        }
+        for (int retry{};; ++retry) {
+            auto outcome{ co_await coro_attempt(core->Options(), core->Pool(), request, options, *body, bridge.get_token()) };
+            if (outcome.result || !outcome.retryable || retry >= max_retries) {
+                co_return std::move(outcome.result);
+            }
+            auto const delay{ retry_delay(retry, outcome.headers ? &*outcome.headers : nullptr) };
+            auto waited{ co_await mcr::Coro::ScheduleAfter(std::chrono::duration_cast<std::chrono::milliseconds>(delay), bridge.get_token()) };
+            if (!waited) {
+                if (waited.error().code == mcr::ErrorCode::ABORTED_BY_CALLBACK) {
+                    co_return std::unexpected{ cancelled_error() };
+                }
+                co_return std::unexpected{ setup_error(waited.error()) };
+            }
+        }
+    }
+
+    auto send_stream_coro(
+        std::shared_ptr<ClientCore const> core,
+        ApiRequest request,
+        RequestOptions options,
+        StreamEventHandler on_event
+    ) -> mcr::Task<Result<void>> {
+        auto body{ serialize_body(request, options) };
+        if (!body) {
+            co_return std::unexpected{ std::move(body.error()) };
+        }
+        auto const max_retries{ options.max_retries.value_or(core->Options().max_retries) };
+        auto bridge{ std::stop_source{} };
+        auto const task_token{ co_await mcr::this_coro::stop_token };
+        std::stop_callback task_stop{ task_token, [&bridge] { bridge.request_stop(); } };
+        std::stop_callback option_stop{ options.stop_token, [&bridge] { bridge.request_stop(); } };
+        if (bridge.get_token().stop_requested()) {
+            co_return std::unexpected{ cancelled_error() };
+        }
+        for (int retry{};; ++retry) {
+            StreamState stream;
+            stream.handler = &on_event;
+            auto outcome{ co_await coro_stream_attempt(core->Options(), core->Pool(), request, options, *body, stream, bridge.get_token()) };
+            if (outcome.result) {
+                co_return Result<void>{};
+            }
+            if (!outcome.retryable || retry >= max_retries) {
+                co_return std::unexpected{ std::move(outcome.result.error()) };
+            }
+            auto const delay{ retry_delay(retry, outcome.headers ? &*outcome.headers : nullptr) };
+            auto waited{ co_await mcr::Coro::ScheduleAfter(std::chrono::duration_cast<std::chrono::milliseconds>(delay), bridge.get_token()) };
+            if (!waited) {
+                if (waited.error().code == mcr::ErrorCode::ABORTED_BY_CALLBACK) {
+                    co_return std::unexpected{ cancelled_error() };
+                }
+                co_return std::unexpected{ setup_error(waited.error()) };
+            }
+        }
     }
 
     auto status_error(long status_code, std::string request_id, std::string_view body) -> Error {
