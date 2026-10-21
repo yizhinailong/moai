@@ -50,6 +50,7 @@ export namespace moai {
     struct RequestOptions {
         std::optional<std::chrono::milliseconds> timeout{}; ///< Replaces ClientOptions::timeout.
         std::optional<int> max_retries{};                   ///< Replaces ClientOptions::max_retries.
+        std::optional<std::string> client_request_id{};     ///< Sent as X-Client-Request-Id for support diagnostics.
         Headers extra_headers{};                            ///< Headers that override defaults with the same name.
         QueryParameters extra_query{};                      ///< Query parameters appended after defaults.
         std::optional<Json> extra_body{};                   ///< Object whose members are merged into the JSON body, overriding typed fields.

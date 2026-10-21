@@ -98,7 +98,7 @@ namespace {
         server.Enqueue(ScriptedResponse::Json(200, std::string{ COMPLETION }));
         auto const completion{ client->chat.completions.Create(
             minimal_params(),
-            { .extra_headers = { { "x-override", "request" } }, .extra_query = { { "trace", "a b" } } }
+            { .client_request_id = "req-client-1", .extra_headers = { { "x-override", "request" } }, .extra_query = { { "trace", "a b" } } }
         ) };
         check.Check(completion.has_value(), "request with overrides succeeds");
         auto const request{ server.LastRequest() };
@@ -107,6 +107,7 @@ namespace {
         check.Check(request.Header("openai-project").empty(), "no project header when unset");
         check.Equal(request.Header("x-team"), std::string{ "core" }, "default header");
         check.Equal(request.Header("x-override"), std::string{ "request" }, "per-request header overrides default case-insensitively");
+        check.Equal(request.Header("x-client-request-id"), std::string{ "req-client-1" }, "client request ID header");
         check.Equal(request.Query(), std::string{ "api-version=1&trace=a%20b" }, "default and extra query parameters, encoded");
     }
 

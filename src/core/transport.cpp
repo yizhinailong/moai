@@ -178,6 +178,47 @@ namespace moai::detail {
         }
 
         /**
+         * @brief Parse an IMF-fixdate HTTP-date such as "Sun, 06 Nov 1994 08:49:37 GMT".
+         * @param text Header value.
+         * @return UTC time, or nullopt when the value has another shape.
+         */
+        auto parse_http_date(std::string_view text) -> std::optional<std::chrono::sys_seconds> {
+            constexpr std::array<std::string_view, 12> MONTHS{ "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
+            text = trim(text);
+            if (text.size() != 29 || text[3] != ',' || text[4] != ' ' || text[7] != ' ' || text[11] != ' ' || text[16] != ' ' || text[19] != ':' ||
+                text[22] != ':' || text[25] != ' ' || text.substr(26) != "GMT") {
+                return std::nullopt;
+            }
+            auto const number{ [](std::string_view digits) -> std::optional<int> {
+                int value{};
+                auto const [end, error]{ std::from_chars(digits.data(), digits.data() + digits.size(), value) };
+                if (error != std::errc{} || end != digits.data() + digits.size()) {
+                    return std::nullopt;
+                }
+                return value;
+            } };
+            auto const day{ number(text.substr(5, 2)) };
+            auto const year{ number(text.substr(12, 4)) };
+            auto const hour{ number(text.substr(17, 2)) };
+            auto const minute{ number(text.substr(20, 2)) };
+            auto const second{ number(text.substr(23, 2)) };
+            auto const month{ std::ranges::find(MONTHS, text.substr(8, 3)) };
+            if (!day || !year || !hour || !minute || !second || month == MONTHS.end() || *hour >= 24 || *minute >= 60 || *second >= 60) {
+                return std::nullopt;
+            }
+            auto const date{ std::chrono::year_month_day{
+                std::chrono::year{ *year },
+                std::chrono::month{ static_cast<unsigned>(month - MONTHS.begin()) + 1 },
+                std::chrono::day{ static_cast<unsigned>(*day) },
+            } };
+            if (!date.ok()) {
+                return std::nullopt;
+            }
+            return std::chrono::sys_seconds{ std::chrono::sys_days{ date } } + std::chrono::hours{ *hour } + std::chrono::minutes{ *minute } +
+                std::chrono::seconds{ *second };
+        }
+
+        /**
          * @brief Compute the wait before the next attempt.
          * @param retry Zero-based number of retries already performed.
          * @param headers Headers of the failed response, or null after transport errors.
@@ -192,8 +233,16 @@ namespace moai::detail {
                     }
                 }
                 if (!requested) {
-                    if (auto const seconds{ header_value(*headers, "retry-after") }) {
-                        requested = parse_seconds(*seconds);
+                    if (auto const after{ header_value(*headers, "retry-after") }) {
+                        requested = parse_seconds(*after);
+                        if (!requested) {
+                            if (auto const date{ parse_http_date(*after) }) {
+                                auto const remaining{ std::chrono::duration<double>(*date - std::chrono::system_clock::now()) };
+                                if (remaining.count() > 0.0) {
+                                    requested = remaining.count();
+                                }
+                            }
+                        }
                     }
                 }
                 if (requested && *requested > 0.0 && *requested <= MAX_RETRY_AFTER) {
@@ -418,6 +467,9 @@ namespace moai::detail {
                 headers["Content-Type"] = "application/json";
             }
             headers["User-Agent"] = std::format("moai/{}", VERSION);
+            if (options.client_request_id) {
+                headers["X-Client-Request-Id"] = *options.client_request_id;
+            }
             for (auto const* extra : { &config.default_headers, &options.extra_headers }) {
                 for (auto const& [name, value] : *extra) {
                     headers.insert_or_assign(name, value);

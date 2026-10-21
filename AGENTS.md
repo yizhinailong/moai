@@ -10,8 +10,8 @@ moai 是基于 C++23 模块的非官方 OpenAI 客户端库，使用 mcpp 构建
 - API 功能、参数及行为以 [OpenAI 官方 API](https://developers.openai.com/api/reference/overview)
   和 [官方 Python SDK](https://developers.openai.com/api/reference/python) 为依据。
   liboai 已归档，其历史接口列表不代表当前 OpenAI API。
-- 已实现核心层和 Chat Completions 的同步调用、SSE 流式、线程池异步、协程及已存储补全管理；
-  对话历史辅助和其他资源尚未实现。新增功能后同步更新 README 的状态。
+- 已实现核心层和 Chat Completions 的同步调用、SSE 流式、线程池异步、协程、已存储补全管理，
+  以及对话历史、结构化输出和工具参数辅助；其他资源尚未实现。新增功能后同步更新 README 的状态。
 - 首个里程碑是 Chat Completions。开发计划和待办记录在仓库根目录的 `TODO.md`
   （本地文件，被 `.gitignore` 忽略，不提交）；完成任务或调整计划时同步更新它。
 - 使用简体中文编写使用文档；API 名称、命令和程序输出保留原文。
@@ -48,16 +48,17 @@ moai 是基于 C++23 模块的非官方 OpenAI 客户端库，使用 mcpp 构建
   `pagination`（`CursorPage`），以及内部分区 `transport`：`transport.cppm` 声明、`transport.cpp`
   实现 mcr 同步 / 异步 / 协程请求、重试、错误映射和 SSE，不由 `moai.cppm` 重新导出。
 - `src/components/chat/`：`types`（请求/响应类型，序列化在 `types.cpp`）、`completions`（资源接口）、
-  `accumulator`（流式分块合并）。
+  `accumulator`（流式分块合并）、`conversation`（对话历史）、`helpers`（结构化输出与工具参数）。
 - `build.mcpp`：生成 `moai:version`，提供 `moai::VERSION` 等常量。
 - `tests/fixtures/mock_server.hpp`：本地回环 mock 服务（脚本化响应、SSE 分块、延迟、断连）和断言辅助。
-- `tests/test_*.cpp`：依赖集成、客户端配置、Create、已存储补全、流式、重试/超时/取消，
-  以及线程池异步和协程路径。
+- `tests/test_*.cpp`：依赖集成、客户端配置、Create、已存储补全、流式、重试/超时/取消、
+  线程池异步和协程路径，以及对话历史、结构化输出和工具参数辅助。
 - `example/`：独立消费 moai 的 mcpp 项目（`chat_basic`、`chat_stream`、`chat_tools`、
-  `chat_async`、`chat_coro`）。
+  `chat_async`、`chat_coro`、`chat_structured_output`）。
+- `docs/`：简体中文使用文档和 Doxygen 构建说明；CI 同时构建 `example/`。
 
 后续按实际实现增加目录和分区，不提前堆积空文件：新资源放在 `src/components/<resource>/`，
-在 `Client` 上增加对应成员；`docs/` 用于详细中文文档。
+在 `Client` 上增加对应成员。
 
 资源组件只处理该资源的参数、路径、序列化和响应映射。认证、超时、重试和连接复用放在核心层，
 底层 HTTP、TLS、代理、Multipart、异步和 SSE 尽量复用 mcr。

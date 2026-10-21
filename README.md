@@ -9,8 +9,9 @@
 
 ## 当前状态
 
-当前版本为 `0.1.0`。已实现核心层和 Chat Completions 的同步、线程池异步、协程、SSE 流式
-及已存储补全的管理接口，可以通过 `import moai;` 调用模型。对话历史辅助和其他资源尚未开始。
+当前版本为 `0.1.0`。已实现核心层和 Chat Completions 的同步、线程池异步、协程、SSE 流式、
+已存储补全管理，以及对话历史、结构化输出和工具参数辅助，可以通过 `import moai;` 调用模型。
+其他资源尚未开始。
 
 liboai 已归档，本项目借鉴其代码分层，具体端点和行为以 OpenAI 官方资料为准。
 
@@ -20,7 +21,7 @@ liboai 已归档，本项目借鉴其代码分层，具体端点和行为以 Ope
 | Chat Completions | `Create`、`CreateStream`、流式分块合并、工具调用、结构化输出参数、多模态消息 | 已实现 |
 | Chat Completions | 已存储补全的 `Retrieve` / `Update` / `List` / `Delete` / `messages.List` 及分页 | 已实现 |
 | Chat Completions | 线程池异步 `CreateAsync` / `CreateStreamAsync`，协程 `CreateCoro` / `CreateStreamCoro` | 已实现 |
-| Chat Completions | 对话历史辅助 `Conversation` | 待实现 |
+| Chat Completions | 对话历史 `Conversation`、结构化输出与工具参数辅助 | 已实现 |
 | 首批扩展 | Models、Responses | 待实现 |
 | 常用资源 | Embeddings、Images、Audio、Files、Uploads、Moderations | 待实现 |
 | 扩展资源 | Conversations、Batches、Fine-tuning、Vector Stores | 待实现 |
@@ -89,6 +90,28 @@ auto source = task.GetStopSource(); // 可从其他线程 request_stop()
 auto completion = mcr::sync_wait(std::move(task));
 ```
 
+`Conversation` 维护多轮历史，`parse_structured_output` 解析 JSON 输出并检查完成原因：
+
+```cpp
+moai::Conversation conversation;
+conversation.Add(moai::system_message("Answer in one sentence."));
+conversation.Add(moai::user_message("What is a C++ module?"));
+
+auto completion = client->chat.completions.Create({
+    .model = "gpt-5-mini",
+    .messages = conversation.Messages(),
+    .response_format = moai::ResponseFormatJsonSchema{
+        .json_schema = { .name = "answer", .schema = moai::Json{ { "type", "object" } }, .strict = true },
+    },
+});
+if (completion) {
+    conversation.Add(*completion);
+    if (auto parsed = moai::parse_structured_output(*completion)) {
+        std::println("{}", parsed->dump());
+    }
+}
+```
+
 要点：
 
 - **配置**：`ClientOptions` 可设置 `api_key`、`organization`、`project`、`base_url`、`timeout`
@@ -116,7 +139,8 @@ auto completion = mcr::sync_wait(std::move(task));
   即 `nlohmann::json`。花括号会构造数组，复制 Json 值时请用 `=` 或圆括号初始化。
 
 完整示例见 [example/](example/)：`chat_basic`、`chat_stream`、`chat_tools`（工具调用循环）、
-`chat_async`（并发线程池请求）、`chat_coro`（协程与确定清理）。
+`chat_async`（并发线程池请求）、`chat_coro`（协程与确定清理）、`chat_structured_output`
+（JSON Schema 结构化输出）。更详细的中文说明见 [docs/](docs/README.md)。
 
 ## 环境与依赖
 
@@ -168,8 +192,8 @@ mcpp test --timeout 90
 ```
 
 测试使用 `tests/fixtures/mock_server.hpp` 中的本地回环 HTTP 服务返回预设响应，覆盖客户端配置、
-请求序列化、响应解码、错误映射、已存储补全、SSE 流式、重试、超时和取消，以及同步 / 异步 / 协程
-三条路径的一致性和协程定时退避。
+请求序列化、响应解码、错误映射、已存储补全、SSE 流式、重试（含 HTTP 日期形式的 `retry-after`）、
+超时和取消，同步 / 异步 / 协程三条路径的一致性和协程定时退避，以及对话历史、结构化输出和工具参数辅助。
 测试不访问外部网络，不需要 OpenAI API key。根项目是库，没有可供 `mcpp run` 执行的默认程序。
 
 生成编辑器编译数据库：
@@ -222,10 +246,13 @@ moai/
 │   └── components/chat/
 │       ├── types.cppm / .cpp       # moai:chat_types，请求/响应类型及序列化
 │       ├── completions.cppm / .cpp # moai:chat_completions，Chat Completions 资源
-│       └── accumulator.cppm / .cpp # moai:chat_accumulator，流式分块合并
+│       ├── accumulator.cppm / .cpp # moai:chat_accumulator，流式分块合并
+│       ├── conversation.cppm / .cpp # moai:chat_conversation，对话历史
+│       └── helpers.cppm / .cpp     # moai:chat_helpers，结构化输出与工具参数
 ├── tests/
 │   ├── fixtures/mock_server.hpp    # 本地回环 mock 服务与断言辅助
 │   └── test_*.cpp                  # 独立测试程序
+├── docs/                           # 中文使用文档与 Doxygen 说明
 ├── example/                        # 独立消费 moai 的示例项目
 ├── .github/workflows/              # 构建、测试、文档及发布配置
 ├── mcpp.toml                       # 包元数据、依赖和构建配置
@@ -236,12 +263,12 @@ moai/
 
 公共接口由 `src/moai.cppm` 统一导出，传输分区只在库内部使用。资源组件只处理参数、路径、
 序列化和响应映射；认证、超时、重试、连接复用和流式解析位于核心层，底层 HTTP 由 mcr 执行。
-`docs/` 中文详细文档尚未创建。
 
 ## 文档与贡献
 
-开发规范和验证命令见 [AGENTS.md](AGENTS.md)。使用文档采用简体中文；新增接口应同步补充测试和状态说明。
-HTTP 测试应使用本地服务或固定响应，避免依赖真实密钥和付费请求。
+开发规范和验证命令见 [AGENTS.md](AGENTS.md)。使用文档采用简体中文，位于 [docs/](docs/README.md)：
+配置与认证、错误处理、Chat Completions、流式/异步/协程、生命周期与线程，以及 Doxygen 构建说明。
+新增接口应同步补充测试、文档和状态说明。HTTP 测试应使用本地服务或固定响应，避免依赖真实密钥和付费请求。
 
 安装 Doxygen 后，先创建 `target/doxygen` 目录，再在仓库根目录运行：
 

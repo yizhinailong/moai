@@ -25,6 +25,13 @@ namespace {
     }
 
     /**
+     * @brief Format a time as an IMF-fixdate for a Retry-After header.
+     */
+    auto http_date(std::chrono::sys_seconds time) -> std::string {
+        return std::format("{:%a, %d %b %Y %H:%M:%S} GMT", time);
+    }
+
+    /**
      * @brief Return the elapsed time of a callable.
      */
     template <typename F>
@@ -55,6 +62,17 @@ namespace {
             auto const result{ client.chat.completions.Create(params()) };
             check.Check(!result && result.error().kind == moai::ErrorKind::InternalServer, "last error is returned");
             check.Equal(server.RequestCount(), std::size_t{ 3 }, "max_retries + 1 attempts");
+        }
+        {
+            MockServer server;
+            auto client{ make_client(server, 1) };
+            auto const retry_at{ std::chrono::ceil<std::chrono::seconds>(std::chrono::system_clock::now()) + 2s };
+            server.Enqueue(ScriptedResponse::Json(503, std::string{ FAILURE }, { { "retry-after", http_date(retry_at) } }));
+            server.Enqueue(ScriptedResponse::Json(200, std::string{ COMPLETION }));
+            auto const [result, elapsed]{ timed([&] { return client.chat.completions.Create(params()); }) };
+            check.Check(result.has_value(), "HTTP-date retry-after is retried");
+            check.Check(elapsed >= 1s, std::format("HTTP-date retry-after is honoured (took {})", elapsed));
+            check.Equal(server.RequestCount(), std::size_t{ 2 }, "one retry after an HTTP-date");
         }
         {
             MockServer server;

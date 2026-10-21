@@ -97,6 +97,10 @@ jobs:
       - name: Test
         run: mcpp test --timeout 90
 
+      - name: Build examples
+        working-directory: example
+        run: mcpp build
+
       - name: Package release
         if: github.ref_type == 'tag'
         run: |

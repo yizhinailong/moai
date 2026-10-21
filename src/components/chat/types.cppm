@@ -735,6 +735,21 @@ namespace moai::detail {
     [[nodiscard]] auto encode_create_params(ChatCompletionCreateParams const& params) -> Json;
 
     /**
+     * @brief Serialize one request message as the API would receive it.
+     * @param message Message to encode.
+     * @return JSON object with the role, content, and optional members.
+     */
+    [[nodiscard]] auto encode_message(ChatCompletionMessageParam const& message) -> Json;
+
+    /**
+     * @brief Decode one request message from JSON.
+     * @param reader Reader positioned on the message object.
+     * @return Decoded message.
+     * @throws DecodeFailure On an unknown role, missing content, or a type mismatch.
+     */
+    [[nodiscard]] auto decode_message_param(JsonReader const& reader) -> ChatCompletionMessageParam;
+
+    /**
      * @brief Decode a `chat.completion` object; throws DecodeFailure on type mismatches.
      */
     [[nodiscard]] auto decode_chat_completion(JsonReader const& reader) -> ChatCompletion;

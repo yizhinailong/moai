@@ -13,4 +13,6 @@ export import :pagination;
 export import :chat_types;
 export import :chat_completions;
 export import :chat_accumulator;
+export import :chat_conversation;
+export import :chat_helpers;
 export import :client;

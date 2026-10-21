@@ -15,22 +15,24 @@ export namespace moai {
      * Error objects carry the status code, request ID, and decoded API error fields.
      */
     enum class ErrorKind : std::uint8_t {
-        InvalidArgument,     ///< The request could not be built, for example invalid options or serialization failure.
-        RequestSetup,        ///< mcr rejected the request configuration before any transfer.
-        Connection,          ///< The transfer failed without an HTTP response, such as DNS, TLS, or reset errors.
-        Timeout,             ///< The transfer exceeded its timeout.
-        Cancelled,           ///< The caller cancelled the request or a stream callback stopped it.
-        BadRequest,          ///< HTTP 400.
-        Authentication,      ///< HTTP 401.
-        PermissionDenied,    ///< HTTP 403.
-        NotFound,            ///< HTTP 404.
-        Conflict,            ///< HTTP 409.
-        UnprocessableEntity, ///< HTTP 422.
-        RateLimit,           ///< HTTP 429.
-        InternalServer,      ///< HTTP 500 and above.
-        Status,              ///< Any other status outside 2xx.
-        Decode,              ///< The response body was not the expected JSON shape.
-        Stream,              ///< A stream reported an error event, ended early, or was not an event stream.
+        InvalidArgument,           ///< The request could not be built, for example invalid options or serialization failure.
+        RequestSetup,              ///< mcr rejected the request configuration before any transfer.
+        Connection,                ///< The transfer failed without an HTTP response, such as DNS, TLS, or reset errors.
+        Timeout,                   ///< The transfer exceeded its timeout.
+        Cancelled,                 ///< The caller cancelled the request or a stream callback stopped it.
+        BadRequest,                ///< HTTP 400.
+        Authentication,            ///< HTTP 401.
+        PermissionDenied,          ///< HTTP 403.
+        NotFound,                  ///< HTTP 404.
+        Conflict,                  ///< HTTP 409.
+        UnprocessableEntity,       ///< HTTP 422.
+        RateLimit,                 ///< HTTP 429.
+        InternalServer,            ///< HTTP 500 and above.
+        Status,                    ///< Any other status outside 2xx.
+        Decode,                    ///< The response body was not the expected JSON shape.
+        Stream,                    ///< A stream reported an error event, ended early, or was not an event stream.
+        LengthFinishReason,        ///< The model stopped because it reached the output token limit.
+        ContentFilterFinishReason, ///< The model stopped because the content filter blocked its output.
     };
 
     /**
@@ -72,6 +74,10 @@ export namespace moai {
                 return "Decode";
             case ErrorKind::Stream:
                 return "Stream";
+            case ErrorKind::LengthFinishReason:
+                return "LengthFinishReason";
+            case ErrorKind::ContentFilterFinishReason:
+                return "ContentFilterFinishReason";
         }
         return "Unknown";
     }

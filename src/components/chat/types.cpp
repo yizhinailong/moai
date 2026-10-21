@@ -396,6 +396,57 @@ namespace moai {
             return std::nullopt;
         }
 
+        /**
+         * @brief Decode a text part of a request message.
+         */
+        auto decode_text_part(JsonReader const& reader) -> ChatCompletionContentPartText {
+            reader.RequireObject();
+            auto const type{ reader.StringOr("type") };
+            if (type != "text") {
+                throw DecodeFailure{ std::format("{}: unsupported text content part type '{}'", reader.Path(), type) };
+            }
+            return ChatCompletionContentPartText{ .text = reader.StringOr("text") };
+        }
+
+        /**
+         * @brief Decode required text content given as a string or a list of text parts.
+         */
+        auto decode_text_content(JsonReader const& reader) -> ChatCompletionTextContent {
+            auto const content{ reader.Field("content") };
+            if (!content) {
+                throw DecodeFailure{ std::format("{}: missing message content", reader.Path().empty() ? "<root>" : reader.Path()) };
+            }
+            if (content->Value().is_string()) {
+                return content->String();
+            }
+            return content->Array(decode_text_part);
+        }
+
+        /**
+         * @brief Decode a content part of an assistant request message.
+         */
+        auto decode_assistant_part(JsonReader const& reader) -> ChatCompletionAssistantContentPart {
+            reader.RequireObject();
+            auto const type{ reader.StringOr("type") };
+            if (type == "text") {
+                return ChatCompletionContentPartText{ .text = reader.StringOr("text") };
+            }
+            if (type == "refusal") {
+                return ChatCompletionContentPartRefusal{ .refusal = reader.StringOr("refusal") };
+            }
+            throw DecodeFailure{ std::format("{}: unsupported assistant content part type '{}'", reader.Path(), type) };
+        }
+
+        /**
+         * @brief Decode optional assistant content given as a string or a list of parts.
+         */
+        auto decode_assistant_content(JsonReader const& content) -> ChatCompletionAssistantContent {
+            if (content.Value().is_string()) {
+                return content.String();
+            }
+            return content.Array(decode_assistant_part);
+        }
+
     } // namespace
 
     auto developer_message(std::string content) -> ChatCompletionMessageParam {
@@ -498,6 +549,61 @@ namespace moai::detail {
             body["web_search_options"] = encode(*params.web_search_options);
         }
         return body;
+    }
+
+    auto encode_message(ChatCompletionMessageParam const& message) -> Json {
+        return encode(message);
+    }
+
+    auto decode_message_param(JsonReader const& reader) -> ChatCompletionMessageParam {
+        reader.RequireObject();
+        auto const role{ reader.OptionalString("role") };
+        if (!role) {
+            throw DecodeFailure{ std::format("{}: missing message role", reader.Path().empty() ? "<root>" : reader.Path()) };
+        }
+        if (*role == "developer") {
+            return ChatCompletionDeveloperMessageParam{
+                .content = decode_text_content(reader),
+                .name = reader.OptionalString("name"),
+            };
+        }
+        if (*role == "system") {
+            return ChatCompletionSystemMessageParam{
+                .content = decode_text_content(reader),
+                .name = reader.OptionalString("name"),
+            };
+        }
+        if (*role == "user") {
+            auto const content{ reader.Field("content") };
+            if (!content) {
+                throw DecodeFailure{ std::format("{}: missing message content", reader.Path().empty() ? "<root>" : reader.Path()) };
+            }
+            return ChatCompletionUserMessageParam{
+                .content = content->Value().is_string() ? ChatCompletionUserContent{ content->String() } : ChatCompletionUserContent{ content->Array(decode_content_part) },
+                .name = reader.OptionalString("name"),
+            };
+        }
+        if (*role == "assistant") {
+            ChatCompletionAssistantMessageParam message{
+                .refusal = reader.OptionalString("refusal"),
+                .name = reader.OptionalString("name"),
+                .tool_calls = reader.ArrayOr("tool_calls", decode_tool_call),
+            };
+            if (auto const content{ reader.Field("content") }) {
+                message.content = decode_assistant_content(*content);
+            }
+            if (auto const audio{ reader.Field("audio") }) {
+                message.audio = ChatCompletionAssistantMessageParam::Audio{ .id = audio->StringOr("id") };
+            }
+            return message;
+        }
+        if (*role == "tool") {
+            return ChatCompletionToolMessageParam{
+                .content = decode_text_content(reader),
+                .tool_call_id = reader.StringOr("tool_call_id"),
+            };
+        }
+        throw DecodeFailure{ std::format("{}: unsupported message role '{}'", reader.Path().empty() ? "<root>" : reader.Path(), *role) };
     }
 
     auto decode_chat_completion(JsonReader const& reader) -> ChatCompletion {

@@ -26,3 +26,7 @@ main = "src/chat_async.cpp"
 [targets.chat_coro]
 kind = "bin"
 main = "src/chat_coro.cpp"
+
+[targets.chat_structured_output]
+kind = "bin"
+main = "src/chat_structured_output.cpp"
