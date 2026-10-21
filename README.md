@@ -19,14 +19,14 @@ liboai 已归档，本项目借鉴其代码分层，具体端点和行为以 Ope
 | 阶段 | 计划内容 | 状态 |
 | --- | --- | --- |
 | 核心层 | 客户端配置、API key、base URL、JSON、错误映射、超时和重试 | 待实现 |
-| 首批资源 | Models、Responses、Chat Completions | 待实现 |
-| 调用方式 | 同步、future/协程异步、SSE 流式事件、取消 | 待实现 |
+| Chat Completions | 创建、SSE 流式、线程池异步与协程、取消、工具调用、结构化输出、已存储补全的管理与分页 | 待实现 |
+| 首批扩展 | Models、Responses | 待实现 |
 | 常用资源 | Embeddings、Images、Audio、Files、Uploads、Moderations | 待实现 |
-| 扩展资源 | Conversations、Batches、Fine-tuning、Vector Stores、分页辅助 | 待实现 |
+| 扩展资源 | Conversations、Batches、Fine-tuning、Vector Stores | 待实现 |
 | 后续评估 | Realtime/WebSocket、Webhooks 及其他官方资源 | 待设计 |
 
-Responses 是新功能的优先入口，同时规划 Chat Completions 以支持现有应用。
-工具调用、结构化输出和多模态参数随相应资源逐步实现，具体字段以官方 API 为准。
+首个里程碑是 Chat Completions，核心层随之实现；OpenAI 推荐用于新功能的 Responses 紧随其后。
+多模态、音频等参数随相应资源逐步实现，具体字段以官方 API 为准。
 
 ## 环境与依赖
 
@@ -135,7 +135,7 @@ moai/
 | --- | --- |
 | `src/client.cppm` | 统一客户端，组合配置、传输和各资源组件 |
 | `src/core/` | 认证、配置、JSON、传输封装、错误、分页、流式基础设施 |
-| `src/components/` | 按官方 API 资源拆分的组件，如 Responses、Chat、Models |
+| `src/components/` | 按官方 API 资源拆分的组件，如 Chat Completions、Models、Responses |
 | `example/` | 独立消费 moai 的可运行示例 |
 | `docs/` | 中文使用文档与设计说明 |
 

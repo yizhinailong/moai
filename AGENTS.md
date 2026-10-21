@@ -12,6 +12,8 @@ moai 是基于 C++23 模块的非官方 OpenAI 客户端库，使用 mcpp 构建
   liboai 已归档，其历史接口列表不代表当前 OpenAI API。
 - 当前是初始化骨架：只有模块入口、自动生成的版本信息和依赖集成测试。
   OpenAI 客户端、资源接口、JSON、流式解析尚未实现。新增功能后同步更新 README 的状态。
+- 首个里程碑是 Chat Completions。开发计划和待办记录在仓库根目录的 `TODO.md`
+  （本地文件，被 `.gitignore` 忽略，不提交）；完成任务或调整计划时同步更新它。
 - 使用简体中文编写使用文档；API 名称、命令和程序输出保留原文。
 
 ## 构建与依赖
@@ -43,7 +45,7 @@ moai 是基于 C++23 模块的非官方 OpenAI 客户端库，使用 mcpp 构建
 后续按实际实现增加目录和分区，不提前堆积空文件：
 
 - `src/core/`：配置、认证、JSON 适配、传输封装、错误、分页和流式基础设施。
-- `src/components/`：Responses、Chat Completions、Models 等资源组件。
+- `src/components/`：Chat Completions（首个实现）、Models、Responses 等资源组件。
 - `src/client.cppm`：组合配置、传输及资源组件的统一客户端。
 - `example/`：独立消费 moai 的可运行示例；`docs/`：详细中文文档。
 
@@ -65,14 +67,19 @@ JSON 依赖应在实现序列化时明确选择；mcr 本身只处理字节，�
 
 ## API 实现约束
 
-- 优先实现配置/认证、错误映射、Models、Responses、Chat Completions，再扩展其他资源。
-  开发具体端点前核对官方文档，不直接照搬 liboai 的旧 Completions、Edits 或 Fine-tunes 接口。
+- 先实现 Chat Completions 所需的核心层（配置/认证、错误映射、JSON、传输、重试），再实现
+  Chat Completions 的创建、SSE 流式、异步/协程及已存储补全的管理接口；之后扩展 Models、Responses
+  和其他资源。开发具体端点前核对官方文档，不直接照搬 liboai 的旧 Completions、Edits、Fine-tunes
+  接口或已弃用的 `functions` / `function_call` 参数。
 - 明确区分 mcr 的请求准备失败、`Response::error` 传输失败，以及 HTTP/API 错误。
   mcr 的 HTTP 4xx/5xx 是普通响应；moai 需要映射成 SDK 错误并保留状态码和请求 ID。
 - API key 从配置或 `OPENAI_API_KEY` 获取；允许配置 base URL 以便本地测试。
   示例和日志不得包含真实密钥。
 - 同步、future/协程和 SSE 接口保持一致的错误与取消语义。一个 Session 的配置和请求需串行使用。
   mcr 异步任务和借用的请求数据必须有明确的生命周期；进程级运行时不能随每次请求关闭。
+- 流式请求不直接使用 mcr 的 `Session::SetServerSentEventCallback`：设置后响应体只交给 SSE 解析器，
+  不写入 `Response::text`，非 SSE 的错误响应体会丢失。应通过 `HeaderCallback` / `WriteCallback`
+  判断状态码和 `Content-Type`，成功时再驱动 `mcr::ServerSentEventParser`，失败时保留错误响应体。
 - 重试要考虑请求体能否重放及流式输出是否已经交付；分页、Multipart、流式事件需要各自的行为测试。
   Realtime 的 WebSocket 会话需单独设计，不能把 SSE 支持等同于 Realtime 支持。
 
