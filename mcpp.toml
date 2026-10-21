@@ -19,7 +19,7 @@ cxxflags = ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
 ldflags = ["-fsanitize=address,undefined"]
 
 [dependencies]
-mcr = { git = "https://github.com/yizhinailong/mcr.git", tag = "v0.3.0" }
+mcr = { git = "https://github.com/yizhinailong/mcr.git", branch = "main" }
 
 [dependencies.nlohmann]
 json = "3.12.0"
