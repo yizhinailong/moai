@@ -1,11 +1,12 @@
 [package]
-name = "mcr"
-version = "0.3.0"
-description = "A modular C++23 HTTP client library built on libcurl, with synchronous, asynchronous, and batch requests"
+name = "moai"
+version = "0.1.0"
+description = "A modular C++23 OpenAI client library built on mcr"
 license = "MIT"
+repo = "https://github.com/yizhinailong/moai"
 
 [lib]
-path = "src/mcr.cppm"
+path = "src/moai.cppm"
 
 [build]
 cxxflags = ["-Wall", "-Wextra", "-Werror"]
@@ -17,17 +18,5 @@ cflags = ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
 cxxflags = ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
 ldflags = ["-fsanitize=address,undefined"]
 
-[dependencies.compat]
-curl = "8.21.0"
-
-[target.linux.dependencies.compat]
-openssl = "3.5.1"
-
-[target.linux.build]
-defines = ["MCR_SSL_CTX_OPENSSL"]
-
-[target.macos.dependencies.compat]
-openssl = "3.5.1"
-
-[target.macos.build]
-defines = ["MCR_SSL_CTX_OPENSSL"]
+[dependencies]
+mcr = { git = "https://github.com/yizhinailong/mcr.git", tag = "v0.3.0" }

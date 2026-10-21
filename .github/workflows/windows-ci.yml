@@ -58,8 +58,8 @@ jobs:
       - name: Install mcpp
         run: |
           $ErrorActionPreference = 'Stop'
-          $mcppVersion = '2026.10.19.1'
-          $mcppSha256 = 'b7244adcdc0661d003d15ad6c478516857af71704dab664aa6b4c747517a3b3b'
+          $mcppVersion = '2026.10.21.1'
+          $mcppSha256 = '6b6a29d1c4892295782ddb523d37f8b266ae720cc2d2d0276dc3031ebe0cd553'
           $archiveName = "mcpp-$mcppVersion-windows-x86_64"
           $archivePath = Join-Path $env:RUNNER_TEMP "$archiveName.zip"
           $installRoot = Join-Path $env:RUNNER_TEMP $archiveName
@@ -97,33 +97,12 @@ jobs:
       - name: Test
         run: mcpp test --timeout 90
 
-      - name: Build request examples
-        working-directory: example
-        run: mcpp build
-
-      - name: Verify all request examples
-        working-directory: example
-        shell: python
-        run: |
-          import pathlib
-          import subprocess
-          import sys
-          import tomllib
-
-          with open("mcpp.toml", "rb") as manifest:
-              targets = tomllib.load(manifest)["targets"]
-          candidates = [directory for directory in pathlib.Path("target").glob("*/*/bin")
-                        if all((directory / f"{name}.exe").is_file() for name in targets)]
-          if len(candidates) != 1:
-              raise RuntimeError(f"Expected one complete example build, found {candidates}")
-          subprocess.run([sys.executable, "scripts/verify.py", "--bin-dir", str(candidates[0])], check=True)
-
       - name: Package release
         if: github.ref_type == 'tag'
         run: |
           $ErrorActionPreference = 'Stop'
           $version = $env:GITHUB_REF_NAME -replace '^v', ''
-          $archive = Join-Path $env:RUNNER_TEMP "mcr-$version-windows-x64.zip"
+          $archive = Join-Path $env:RUNNER_TEMP "moai-$version-windows-x64.zip"
           mcpp pack --release -o $archive
           if ($LASTEXITCODE -ne 0 -or !(Test-Path -LiteralPath $archive)) {
               throw 'mcpp pack did not produce the expected archive.'
@@ -133,7 +112,7 @@ jobs:
         if: github.ref_type == 'tag'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: mcr-windows-x64
-          path: ${{ runner.temp }}/mcr-*-windows-x64.zip
+          name: moai-windows-x64
+          path: ${{ runner.temp }}/moai-*-windows-x64.zip
           if-no-files-found: error
           retention-days: 7

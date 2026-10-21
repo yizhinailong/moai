@@ -113,7 +113,7 @@ jobs:
           git -c 'user.name=github-actions[bot]' `
               -c 'user.email=41898282+github-actions[bot]@users.noreply.github.com' `
               tag --annotate --no-sign $env:VERSION_TAG `
-              --message "mcr $env:PROJECT_VERSION" $env:GITHUB_SHA
+              --message "moai $env:PROJECT_VERSION" $env:GITHUB_SHA
           if ($LASTEXITCODE -ne 0) {
               throw "Failed to create tag $env:VERSION_TAG"
           }
@@ -127,7 +127,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION_TAG: ${{ steps.version.outputs.tag }}
-        # Like FileMonitor, dispatch explicitly because GITHUB_TOKEN tag pushes do not trigger push workflows.
+        # Dispatch explicitly because GITHUB_TOKEN tag pushes do not trigger push workflows.
         run: |
           gh workflow run release.yml `
               --repo $env:GITHUB_REPOSITORY `

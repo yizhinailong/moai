@@ -18,9 +18,9 @@ auto read_version(std::filesystem::path const& path) -> std::string {
     }
     std::regex const section{ R"(^\s*\[([^\]]+)\]\s*(?:#.*)?$)" };
     std::regex const version{ R"regex(^\s*version\s*=\s*["']([0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.+-]+)?)["']\s*(?:#.*)?$)regex" };
-    bool             package{ false };
-    std::string      line;
-    std::smatch      match;
+    bool package{ false };
+    std::string line;
+    std::smatch match;
     while (std::getline(input, line)) {
         if (std::regex_match(line, match, section)) {
             package = match[1] == "package";
@@ -39,9 +39,9 @@ auto main() -> int {
     try {
         auto const manifest{ std::filesystem::path{ mcpp::manifest_dir() } / "mcpp.toml" };
         mcpp::rerun_if_changed(manifest.string().c_str());
-        auto const              version{ read_version(manifest) };
+        auto const version{ read_version(manifest) };
         std::array<unsigned, 3> parts{};
-        std::string_view        remaining{ version };
+        std::string_view remaining{ version };
         for (std::size_t index{}; index < parts.size(); ++index) {
             auto const end{ remaining.find_first_of(".-+") };
             auto const part{ remaining.substr(0, end) };
@@ -53,29 +53,26 @@ auto main() -> int {
                 remaining.remove_prefix(end + 1);
             }
         }
-        auto const        output{ std::filesystem::path{ mcpp::out_dir() } / "mcr_version.cppm" };
-        auto const        source{ std::format(R"module(/**
- * @file mcr_version.cppm
+        auto const output{ std::filesystem::path{ mcpp::out_dir() } / "moai_version.cppm" };
+        auto const source{ std::format(R"module(/**
+ * @file moai_version.cppm
  * @brief Generated from mcpp.toml; do not edit.
  */
-module;
-#include <curl/curlver.h>
-export module mcr:version;
+export module moai:version;
 import std;
-export namespace mcr {{
+export namespace moai {{
     inline constexpr std::string_view VERSION{{ "{}" }}; ///< Full package version.
     inline constexpr unsigned VERSION_MAJOR{{ {} }}; ///< Major version component.
     inline constexpr unsigned VERSION_MINOR{{ {} }}; ///< Minor version component.
     inline constexpr unsigned VERSION_PATCH{{ {} }}; ///< Patch version component.
     inline constexpr unsigned VERSION_NUM{{ (VERSION_MAJOR << 16) | (VERSION_MINOR << 8) | VERSION_PATCH }}; ///< Packed 0xAABBCC version.
-    inline constexpr unsigned CURL_VERSION_NUM{{ LIBCURL_VERSION_NUM }}; ///< Curl headers used to build this library.
 }}
 )module",
-                                              version,
-                                              parts[0],
-                                              parts[1],
-                                              parts[2]) };
-        std::ifstream     existing{ output, std::ios::binary };
+                                       version,
+                                       parts[0],
+                                       parts[1],
+                                       parts[2]) };
+        std::ifstream existing{ output, std::ios::binary };
         std::string const previous{ std::istreambuf_iterator<char>{ existing }, {} };
         existing.close();
         if (previous != source) {
@@ -87,7 +84,7 @@ export namespace mcr {{
         mcpp::generated(output.string().c_str());
         return 0;
     } catch (std::exception const& error) {
-        std::println("mcr version generation: {}", error.what());
+        std::println("moai version generation: {}", error.what());
         return 1;
     }
 }

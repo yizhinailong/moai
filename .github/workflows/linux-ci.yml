@@ -59,8 +59,8 @@ jobs:
 
       - name: Install mcpp
         run: |
-          mcpp_version='2026.10.19.1'
-          mcpp_sha256='b9b83298c243a024bf9720f303d4d542958d7d8d9aea604d996039af2546c8a8'
+          mcpp_version='2026.10.21.1'
+          mcpp_sha256='41c42b3af886382fe0e019ddf1d2f619e77aaf3668a01695dc89422cf512f526'
           archive_name="mcpp-$mcpp_version-linux-x86_64"
           archive_path="$RUNNER_TEMP/$archive_name.tar.gz"
           install_root="$RUNNER_TEMP/$archive_name"
@@ -88,45 +88,14 @@ jobs:
       - name: Build
         run: mcpp build --profile ${{ matrix.profile }}
 
-      - name: Verify TLS fixture dependencies
-        run: |
-          openssl version
-          python3 -c 'import ssl; print(ssl.OPENSSL_VERSION)'
-
       - name: Test
-        run: |
-          set -o pipefail
-          mcpp test --profile ${{ matrix.profile }} --timeout 90 | tee "$RUNNER_TEMP/mcr-tests.log"
-          grep -F 'test_ssl_options: verified HTTPS and mutual TLS file/blob paths' "$RUNNER_TEMP/mcr-tests.log"
-
-      - name: Build request examples
-        if: matrix.profile == 'dev'
-        working-directory: example
-        run: mcpp build
-
-      - name: Verify all request examples
-        if: matrix.profile == 'dev'
-        working-directory: example
-        shell: python
-        run: |
-          import pathlib
-          import subprocess
-          import sys
-          import tomllib
-
-          with open("mcpp.toml", "rb") as manifest:
-              targets = tomllib.load(manifest)["targets"]
-          candidates = [directory for directory in pathlib.Path("target").glob("*/*/bin")
-                        if all((directory / name).is_file() for name in targets)]
-          if len(candidates) != 1:
-              raise RuntimeError(f"Expected one complete example build, found {candidates}")
-          subprocess.run([sys.executable, "scripts/verify.py", "--bin-dir", str(candidates[0])], check=True)
+        run: mcpp test --profile ${{ matrix.profile }} --timeout 90
 
       - name: Package release
         if: github.ref_type == 'tag' && matrix.profile == 'dev'
         run: |
           version="${GITHUB_REF_NAME#v}"
-          archive="$RUNNER_TEMP/mcr-$version-linux-x64.tar.gz"
+          archive="$RUNNER_TEMP/moai-$version-linux-x64.tar.gz"
           mcpp pack --release -o "$archive"
           test -f "$archive"
 
@@ -134,7 +103,7 @@ jobs:
         if: github.ref_type == 'tag' && matrix.profile == 'dev'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: mcr-linux-x64
-          path: ${{ runner.temp }}/mcr-*-linux-x64.tar.gz
+          name: moai-linux-x64
+          path: ${{ runner.temp }}/moai-*-linux-x64.tar.gz
           if-no-files-found: error
           retention-days: 7
