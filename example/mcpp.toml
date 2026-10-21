@@ -1,0 +1,20 @@
+[package]
+name = "moai_examples"
+version = "0.1.0"
+description = "Standalone examples that consume moai"
+license = "MIT"
+
+[dependencies]
+moai = { path = ".." }
+
+[targets.chat_basic]
+kind = "bin"
+main = "src/chat_basic.cpp"
+
+[targets.chat_stream]
+kind = "bin"
+main = "src/chat_stream.cpp"
+
+[targets.chat_tools]
+kind = "bin"
+main = "src/chat_tools.cpp"

@@ -1,0 +1,772 @@
+/**
+ * @file types.cppm
+ * @brief Request and response types of the Chat Completions API.
+ * @note Types mirror the JSON structure and names of the official API reference. Optional fields
+ * that are unset are omitted from requests; fields missing or null in responses keep their
+ * default values. String fields such as `model`, `reasoning_effort`, and `finish_reason` accept
+ * values introduced after this release.
+ * @see https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create
+ */
+export module moai:chat_types;
+
+import std;
+import :json;
+import :pagination;
+
+export namespace moai {
+
+    // ----------------------------------------------------------------------------------------
+    // Content parts
+    // ----------------------------------------------------------------------------------------
+
+    /**
+     * @brief Text content part: `{"type": "text", "text": ...}`.
+     */
+    struct ChatCompletionContentPartText {
+        std::string text{}; ///< Text content.
+    };
+
+    /**
+     * @brief Refusal content part used in assistant messages: `{"type": "refusal", ...}`.
+     */
+    struct ChatCompletionContentPartRefusal {
+        std::string refusal{}; ///< Refusal message.
+    };
+
+    /**
+     * @brief Image content part: `{"type": "image_url", "image_url": {...}}`.
+     */
+    struct ChatCompletionContentPartImage {
+        /**
+         * @brief Image location and detail level.
+         */
+        struct ImageUrl {
+            std::string url{};                   ///< Image URL or base64 data URL.
+            std::optional<std::string> detail{}; ///< Detail level, for example "auto", "low", or "high".
+        };
+
+        ImageUrl image_url{}; ///< Image settings.
+    };
+
+    /**
+     * @brief Audio input content part: `{"type": "input_audio", "input_audio": {...}}`.
+     */
+    struct ChatCompletionContentPartInputAudio {
+        /**
+         * @brief Encoded audio data.
+         */
+        struct InputAudio {
+            std::string data{};   ///< Base64-encoded audio.
+            std::string format{}; ///< Audio format, for example "wav" or "mp3".
+        };
+
+        InputAudio input_audio{}; ///< Audio settings.
+    };
+
+    /**
+     * @brief File content part: `{"type": "file", "file": {...}}`.
+     */
+    struct ChatCompletionContentPartFile {
+        /**
+         * @brief Uploaded file reference or inline file data.
+         */
+        struct File {
+            std::optional<std::string> file_data{}; ///< Base64-encoded file data.
+            std::optional<std::string> file_id{};   ///< ID of an uploaded file.
+            std::optional<std::string> filename{};  ///< File name used with file_data.
+        };
+
+        File file{}; ///< File settings.
+    };
+
+    /**
+     * @brief Content part accepted by user messages.
+     */
+    using ChatCompletionContentPart = std::variant<
+        ChatCompletionContentPartText,
+        ChatCompletionContentPartImage,
+        ChatCompletionContentPartInputAudio,
+        ChatCompletionContentPartFile>;
+
+    /**
+     * @brief Plain text or a list of text parts.
+     */
+    using ChatCompletionTextContent = std::variant<std::string, std::vector<ChatCompletionContentPartText>>;
+
+    /**
+     * @brief Plain text or a list of multimodal parts.
+     */
+    using ChatCompletionUserContent = std::variant<std::string, std::vector<ChatCompletionContentPart>>;
+
+    /**
+     * @brief Content part accepted by assistant messages.
+     */
+    using ChatCompletionAssistantContentPart = std::variant<ChatCompletionContentPartText, ChatCompletionContentPartRefusal>;
+
+    /**
+     * @brief Plain text or a list of text and refusal parts.
+     */
+    using ChatCompletionAssistantContent = std::variant<std::string, std::vector<ChatCompletionAssistantContentPart>>;
+
+    // ----------------------------------------------------------------------------------------
+    // Tool calls
+    // ----------------------------------------------------------------------------------------
+
+    /**
+     * @brief Function tool call: `{"id", "type": "function", "function": {...}}`.
+     */
+    struct ChatCompletionMessageFunctionToolCall {
+        /**
+         * @brief Called function.
+         */
+        struct Function {
+            std::string name{};      ///< Function name.
+            std::string arguments{}; ///< JSON-encoded arguments; validate before use.
+        };
+
+        std::string id{};    ///< Tool call ID referenced by the tool result message.
+        Function function{}; ///< Called function.
+    };
+
+    /**
+     * @brief Custom tool call: `{"id", "type": "custom", "custom": {...}}`.
+     */
+    struct ChatCompletionMessageCustomToolCall {
+        /**
+         * @brief Called custom tool.
+         */
+        struct Custom {
+            std::string name{};  ///< Tool name.
+            std::string input{}; ///< Free-form input generated by the model.
+        };
+
+        std::string id{}; ///< Tool call ID referenced by the tool result message.
+        Custom custom{};  ///< Called custom tool.
+    };
+
+    /**
+     * @brief Tool call made by the model.
+     */
+    using ChatCompletionMessageToolCall = std::variant<ChatCompletionMessageFunctionToolCall, ChatCompletionMessageCustomToolCall>;
+
+    // ----------------------------------------------------------------------------------------
+    // Request messages
+    // ----------------------------------------------------------------------------------------
+
+    /**
+     * @brief Developer instructions; replace system messages for newer models.
+     */
+    struct ChatCompletionDeveloperMessageParam {
+        ChatCompletionTextContent content{}; ///< Instructions.
+        std::optional<std::string> name{};   ///< Optional participant name.
+    };
+
+    /**
+     * @brief System instructions.
+     */
+    struct ChatCompletionSystemMessageParam {
+        ChatCompletionTextContent content{}; ///< Instructions.
+        std::optional<std::string> name{};   ///< Optional participant name.
+    };
+
+    /**
+     * @brief End-user message with text or multimodal content.
+     */
+    struct ChatCompletionUserMessageParam {
+        ChatCompletionUserContent content{}; ///< Message content.
+        std::optional<std::string> name{};   ///< Optional participant name.
+    };
+
+    /**
+     * @brief Earlier assistant turn, including any tool calls it made.
+     */
+    struct ChatCompletionAssistantMessageParam {
+        /**
+         * @brief Reference to an earlier audio response.
+         */
+        struct Audio {
+            std::string id{}; ///< Audio response ID.
+        };
+
+        std::optional<ChatCompletionAssistantContent> content{}; ///< Content; may be omitted when tool_calls is set.
+        std::optional<std::string> refusal{};                    ///< Refusal message.
+        std::optional<std::string> name{};                       ///< Optional participant name.
+        std::vector<ChatCompletionMessageToolCall> tool_calls{}; ///< Tool calls; omitted when empty.
+        std::optional<Audio> audio{};                            ///< Earlier audio response.
+    };
+
+    /**
+     * @brief Result of a tool call.
+     */
+    struct ChatCompletionToolMessageParam {
+        ChatCompletionTextContent content{}; ///< Tool output.
+        std::string tool_call_id{};          ///< ID of the call this message answers.
+    };
+
+    /**
+     * @brief Message in a chat request.
+     */
+    using ChatCompletionMessageParam = std::variant<
+        ChatCompletionDeveloperMessageParam,
+        ChatCompletionSystemMessageParam,
+        ChatCompletionUserMessageParam,
+        ChatCompletionAssistantMessageParam,
+        ChatCompletionToolMessageParam>;
+
+    // ----------------------------------------------------------------------------------------
+    // Tools, tool choice, and output formats
+    // ----------------------------------------------------------------------------------------
+
+    /**
+     * @brief Function the model may call.
+     */
+    struct FunctionDefinition {
+        std::string name{};                       ///< Name matching [a-zA-Z0-9_-], at most 64 characters.
+        std::optional<std::string> description{}; ///< When and how to call the function.
+        std::optional<Json> parameters{};         ///< JSON Schema object describing the arguments.
+        std::optional<bool> strict{};             ///< Whether arguments must follow the schema exactly.
+    };
+
+    /**
+     * @brief Function tool: `{"type": "function", "function": {...}}`.
+     */
+    struct ChatCompletionFunctionTool {
+        FunctionDefinition function{}; ///< Function definition.
+    };
+
+    /**
+     * @brief Unconstrained text input for a custom tool.
+     */
+    struct CustomToolInputFormatText {};
+
+    /**
+     * @brief Grammar-constrained input for a custom tool.
+     */
+    struct CustomToolInputFormatGrammar {
+        /**
+         * @brief Grammar definition.
+         */
+        struct Grammar {
+            std::string definition{}; ///< Grammar text.
+            std::string syntax{};     ///< Grammar syntax, "lark" or "regex".
+        };
+
+        Grammar grammar{}; ///< Grammar definition.
+    };
+
+    /**
+     * @brief Input format of a custom tool.
+     */
+    using CustomToolInputFormat = std::variant<CustomToolInputFormatText, CustomToolInputFormatGrammar>;
+
+    /**
+     * @brief Custom tool: `{"type": "custom", "custom": {...}}`.
+     */
+    struct ChatCompletionCustomTool {
+        /**
+         * @brief Custom tool definition.
+         */
+        struct Custom {
+            std::string name{};                            ///< Tool name.
+            std::optional<std::string> description{};      ///< When and how to use the tool.
+            std::optional<CustomToolInputFormat> format{}; ///< Input format; free text when unset.
+        };
+
+        Custom custom{}; ///< Tool definition.
+    };
+
+    /**
+     * @brief Tool available to the model.
+     */
+    using ChatCompletionTool = std::variant<ChatCompletionFunctionTool, ChatCompletionCustomTool>;
+
+    /**
+     * @brief Force a specific function: `{"type": "function", "function": {"name"}}`.
+     */
+    struct ChatCompletionNamedToolChoice {
+        /**
+         * @brief Function to call.
+         */
+        struct Function {
+            std::string name{}; ///< Function name.
+        };
+
+        Function function{}; ///< Function to call.
+    };
+
+    /**
+     * @brief Force a specific custom tool: `{"type": "custom", "custom": {"name"}}`.
+     */
+    struct ChatCompletionNamedToolChoiceCustom {
+        /**
+         * @brief Custom tool to call.
+         */
+        struct Custom {
+            std::string name{}; ///< Tool name.
+        };
+
+        Custom custom{}; ///< Custom tool to call.
+    };
+
+    /**
+     * @brief Restrict the model to a subset of tools: `{"type": "allowed_tools", ...}`.
+     */
+    struct ChatCompletionAllowedToolChoice {
+        /**
+         * @brief Allowed tool configuration.
+         */
+        struct AllowedTools {
+            std::string mode{};        ///< "auto" or "required".
+            std::vector<Json> tools{}; ///< Tool references, for example {"type": "function", "function": {"name": "f"}}.
+        };
+
+        AllowedTools allowed_tools{}; ///< Allowed tool configuration.
+    };
+
+    /**
+     * @brief Tool choice: "none", "auto", "required", or a specific tool.
+     */
+    using ChatCompletionToolChoiceOption = std::variant<
+        std::string,
+        ChatCompletionNamedToolChoice,
+        ChatCompletionNamedToolChoiceCustom,
+        ChatCompletionAllowedToolChoice>;
+
+    /**
+     * @brief Plain text output: `{"type": "text"}`.
+     */
+    struct ResponseFormatText {};
+
+    /**
+     * @brief Legacy JSON mode: `{"type": "json_object"}`; instruct the model to produce JSON.
+     */
+    struct ResponseFormatJsonObject {};
+
+    /**
+     * @brief Structured Outputs: `{"type": "json_schema", "json_schema": {...}}`.
+     */
+    struct ResponseFormatJsonSchema {
+        /**
+         * @brief Output schema.
+         */
+        struct JsonSchema {
+            std::string name{};                       ///< Format name.
+            std::optional<std::string> description{}; ///< Purpose of the format.
+            std::optional<Json> schema{};             ///< JSON Schema object.
+            std::optional<bool> strict{};             ///< Whether the output must follow the schema exactly.
+        };
+
+        JsonSchema json_schema{}; ///< Output schema.
+    };
+
+    /**
+     * @brief Output format of the model.
+     */
+    using ResponseFormat = std::variant<ResponseFormatText, ResponseFormatJsonObject, ResponseFormatJsonSchema>;
+
+    // ----------------------------------------------------------------------------------------
+    // Other request parameters
+    // ----------------------------------------------------------------------------------------
+
+    /**
+     * @brief Audio output settings, required when modalities include "audio".
+     */
+    struct ChatCompletionAudioParam {
+        std::string format{}; ///< Output format, for example "wav" or "mp3".
+        std::string voice{};  ///< Built-in voice name.
+    };
+
+    /**
+     * @brief Predicted output: `{"type": "content", "content": ...}`.
+     */
+    struct ChatCompletionPredictionContent {
+        ChatCompletionTextContent content{}; ///< Expected content.
+    };
+
+    /**
+     * @brief Streaming options; only valid with CreateStream.
+     */
+    struct ChatCompletionStreamOptions {
+        std::optional<bool> include_obfuscation{}; ///< Whether chunks carry obfuscation padding.
+        std::optional<bool> include_usage{};       ///< Whether a final chunk reports token usage.
+    };
+
+    /**
+     * @brief Web search settings for search-enabled models.
+     */
+    struct WebSearchOptions {
+        /**
+         * @brief Approximate user location: `{"type": "approximate", "approximate": {...}}`.
+         */
+        struct UserLocation {
+            /**
+             * @brief Location fields.
+             */
+            struct Approximate {
+                std::optional<std::string> city{};     ///< City name.
+                std::optional<std::string> country{};  ///< Two-letter ISO country code.
+                std::optional<std::string> region{};   ///< Region name.
+                std::optional<std::string> timezone{}; ///< IANA time zone.
+            };
+
+            Approximate approximate{}; ///< Location fields.
+        };
+
+        std::optional<std::string> search_context_size{}; ///< "low", "medium", or "high".
+        std::optional<UserLocation> user_location{};      ///< Approximate user location.
+    };
+
+    /**
+     * @brief Parameters of `POST /chat/completions`.
+     * @note `stream` is not a field: Create() sends a buffered request and CreateStream() a streaming
+     * one. Fields not modelled here, such as newly added parameters, can be sent through
+     * RequestOptions::extra_body.
+     */
+    struct ChatCompletionCreateParams {
+        std::string model{};                                                       ///< Model ID.
+        std::vector<ChatCompletionMessageParam> messages{};                        ///< Conversation so far.
+        std::optional<ChatCompletionAudioParam> audio{};                           ///< Audio output settings.
+        std::optional<double> frequency_penalty{};                                 ///< -2.0 to 2.0.
+        std::optional<std::map<std::string, int>> logit_bias{};                    ///< Token ID to bias, -100 to 100.
+        std::optional<bool> logprobs{};                                            ///< Whether to return log probabilities.
+        std::optional<std::int64_t> max_completion_tokens{};                       ///< Upper bound for generated tokens, including reasoning tokens.
+        std::optional<std::int64_t> max_tokens{};                                  ///< Deprecated; kept for compatible servers.
+        std::optional<std::map<std::string, std::string>> metadata{};              ///< Up to 16 key/value pairs.
+        std::optional<std::vector<std::string>> modalities{};                      ///< Output types, for example {"text", "audio"}.
+        std::optional<std::int64_t> n{};                                           ///< Number of choices.
+        std::optional<bool> parallel_tool_calls{};                                 ///< Whether tool calls may run in parallel.
+        std::optional<ChatCompletionPredictionContent> prediction{};               ///< Predicted output.
+        std::optional<double> presence_penalty{};                                  ///< -2.0 to 2.0.
+        std::optional<std::string> prompt_cache_key{};                             ///< Cache routing key.
+        std::optional<std::string> reasoning_effort{};                             ///< Reasoning effort, for example "low" or "high".
+        std::optional<ResponseFormat> response_format{};                           ///< Output format.
+        std::optional<std::string> safety_identifier{};                            ///< Stable end-user identifier for abuse detection.
+        std::optional<std::int64_t> seed{};                                        ///< Deprecated best-effort determinism.
+        std::optional<std::string> service_tier{};                                 ///< Processing tier, for example "auto" or "flex".
+        std::optional<std::variant<std::string, std::vector<std::string>>> stop{}; ///< Stop sequences.
+        std::optional<bool> store{};                                               ///< Whether to store the completion for later retrieval.
+        std::optional<ChatCompletionStreamOptions> stream_options{};               ///< Streaming options; CreateStream only.
+        std::optional<double> temperature{};                                       ///< Sampling temperature, 0 to 2.
+        std::optional<ChatCompletionToolChoiceOption> tool_choice{};               ///< Tool selection policy.
+        std::vector<ChatCompletionTool> tools{};                                   ///< Available tools; omitted when empty.
+        std::optional<std::int64_t> top_logprobs{};                                ///< 0 to 20; requires logprobs.
+        std::optional<double> top_p{};                                             ///< Nucleus sampling probability mass.
+        std::optional<std::string> user{};                                         ///< Deprecated end-user identifier.
+        std::optional<std::string> verbosity{};                                    ///< "low", "medium", or "high".
+        std::optional<WebSearchOptions> web_search_options{};                      ///< Web search settings.
+    };
+
+    // ----------------------------------------------------------------------------------------
+    // Responses
+    // ----------------------------------------------------------------------------------------
+
+    /**
+     * @brief Log probability of one output token.
+     */
+    struct ChatCompletionTokenLogprob {
+        /**
+         * @brief One of the most likely tokens at this position.
+         */
+        struct TopLogprob {
+            std::string token{};                              ///< Token text.
+            std::optional<std::vector<std::int64_t>> bytes{}; ///< UTF-8 bytes of the token.
+            double logprob{};                                 ///< Log probability.
+        };
+
+        std::string token{};                              ///< Token text.
+        std::optional<std::vector<std::int64_t>> bytes{}; ///< UTF-8 bytes of the token.
+        double logprob{};                                 ///< Log probability.
+        std::vector<TopLogprob> top_logprobs{};           ///< Most likely alternatives.
+    };
+
+    /**
+     * @brief Log probabilities of a choice.
+     */
+    struct ChatCompletionChoiceLogprobs {
+        std::optional<std::vector<ChatCompletionTokenLogprob>> content{}; ///< Content tokens.
+        std::optional<std::vector<ChatCompletionTokenLogprob>> refusal{}; ///< Refusal tokens.
+    };
+
+    /**
+     * @brief Audio output of an assistant message.
+     */
+    struct ChatCompletionAudio {
+        std::string id{};          ///< Audio response ID, usable in later assistant messages.
+        std::string data{};        ///< Base64-encoded audio.
+        std::int64_t expires_at{}; ///< Unix time after which the audio cannot be referenced.
+        std::string transcript{};  ///< Transcript of the audio.
+    };
+
+    /**
+     * @brief Assistant message generated by the model.
+     */
+    struct ChatCompletionMessage {
+        /**
+         * @brief Citation of a web source: `{"type": "url_citation", "url_citation": {...}}`.
+         */
+        struct Annotation {
+            /**
+             * @brief Cited range and source.
+             */
+            struct UrlCitation {
+                std::int64_t end_index{};   ///< Index after the last cited character.
+                std::int64_t start_index{}; ///< Index of the first cited character.
+                std::string title{};        ///< Source title.
+                std::string url{};          ///< Source URL.
+            };
+
+            std::string type{ "url_citation" }; ///< Annotation type.
+            UrlCitation url_citation{};         ///< Citation details.
+        };
+
+        std::string role{ "assistant" };                         ///< Author role.
+        std::optional<std::string> content{};                    ///< Text content, if any.
+        std::optional<std::string> refusal{};                    ///< Refusal message, if the model refused.
+        std::vector<Annotation> annotations{};                   ///< Citations.
+        std::optional<ChatCompletionAudio> audio{};              ///< Audio output.
+        std::vector<ChatCompletionMessageToolCall> tool_calls{}; ///< Tool calls requested by the model.
+    };
+
+    /**
+     * @brief Token counts of a request.
+     */
+    struct CompletionUsage {
+        /**
+         * @brief Breakdown of completion tokens.
+         */
+        struct CompletionTokensDetails {
+            std::optional<std::int64_t> accepted_prediction_tokens{}; ///< Predicted tokens that appeared in the output.
+            std::optional<std::int64_t> audio_tokens{};               ///< Audio output tokens.
+            std::optional<std::int64_t> reasoning_tokens{};           ///< Reasoning tokens.
+            std::optional<std::int64_t> rejected_prediction_tokens{}; ///< Predicted tokens that did not appear.
+        };
+
+        /**
+         * @brief Breakdown of prompt tokens.
+         */
+        struct PromptTokensDetails {
+            std::optional<std::int64_t> audio_tokens{};  ///< Audio input tokens.
+            std::optional<std::int64_t> cached_tokens{}; ///< Tokens served from the prompt cache.
+        };
+
+        std::int64_t completion_tokens{};                                   ///< Generated tokens.
+        std::int64_t prompt_tokens{};                                       ///< Prompt tokens.
+        std::int64_t total_tokens{};                                        ///< Sum of prompt and completion tokens.
+        std::optional<CompletionTokensDetails> completion_tokens_details{}; ///< Completion breakdown.
+        std::optional<PromptTokensDetails> prompt_tokens_details{};         ///< Prompt breakdown.
+    };
+
+    /**
+     * @brief Response of `POST /chat/completions` and of the stored-completion endpoints.
+     */
+    struct ChatCompletion {
+        /**
+         * @brief One generated alternative.
+         */
+        struct Choice {
+            std::string finish_reason{};                            ///< "stop", "length", "tool_calls", "content_filter", or a newer value.
+            std::int64_t index{};                                   ///< Position in the choice list.
+            std::optional<ChatCompletionChoiceLogprobs> logprobs{}; ///< Log probabilities, if requested.
+            ChatCompletionMessage message{};                        ///< Generated message.
+        };
+
+        std::string id{};                                ///< Completion ID.
+        std::vector<Choice> choices{};                   ///< Generated alternatives.
+        std::int64_t created{};                          ///< Unix creation time in seconds.
+        std::string model{};                             ///< Model that produced the completion.
+        std::string object{ "chat.completion" };         ///< Object type.
+        std::optional<std::string> service_tier{};       ///< Tier that processed the request.
+        std::optional<std::string> system_fingerprint{}; ///< Backend configuration fingerprint.
+        std::optional<CompletionUsage> usage{};          ///< Token usage.
+        Json raw{};                                      ///< Complete response document, including fields not modelled here.
+    };
+
+    /**
+     * @brief Incremental chunk of a streamed completion.
+     * @note Use ChatCompletionAccumulator to combine chunks into a ChatCompletion.
+     */
+    struct ChatCompletionChunk {
+        /**
+         * @brief Incremental update of one choice.
+         */
+        struct Choice {
+            /**
+             * @brief Fields added by this chunk.
+             */
+            struct Delta {
+                /**
+                 * @brief Fragment of a tool call; fragments with the same index belong together.
+                 */
+                struct ToolCall {
+                    /**
+                     * @brief Function fragment.
+                     */
+                    struct Function {
+                        std::optional<std::string> arguments{}; ///< Next part of the JSON arguments.
+                        std::optional<std::string> name{};      ///< Function name, sent in the first fragment.
+                    };
+
+                    std::int64_t index{};               ///< Tool call position within the choice.
+                    std::optional<std::string> id{};    ///< Tool call ID, sent in the first fragment.
+                    std::optional<Function> function{}; ///< Function fragment.
+                    std::optional<std::string> type{};  ///< Tool call type, sent in the first fragment.
+                };
+
+                std::optional<std::string> content{}; ///< Next part of the content.
+                std::optional<std::string> refusal{}; ///< Next part of the refusal.
+                std::optional<std::string> role{};    ///< Author role, sent in the first chunk.
+                std::vector<ToolCall> tool_calls{};   ///< Tool call fragments.
+            };
+
+            Delta delta{};                                          ///< Fields added by this chunk.
+            std::optional<std::string> finish_reason{};             ///< Set in the last chunk of the choice.
+            std::int64_t index{};                                   ///< Choice position.
+            std::optional<ChatCompletionChoiceLogprobs> logprobs{}; ///< Log probabilities of this chunk.
+        };
+
+        std::string id{};                                ///< Completion ID shared by all chunks.
+        std::vector<Choice> choices{};                   ///< Choice updates; empty in the final usage chunk.
+        std::int64_t created{};                          ///< Unix creation time in seconds.
+        std::string model{};                             ///< Model that produced the completion.
+        std::string object{ "chat.completion.chunk" };   ///< Object type.
+        std::optional<std::string> service_tier{};       ///< Tier that processed the request.
+        std::optional<std::string> system_fingerprint{}; ///< Backend configuration fingerprint.
+        std::optional<CompletionUsage> usage{};          ///< Token usage, only in the final chunk when requested.
+        Json raw{};                                      ///< Complete chunk document, including fields not modelled here.
+    };
+
+    /**
+     * @brief Response of `DELETE /chat/completions/{id}`.
+     */
+    struct ChatCompletionDeleted {
+        std::string id{};                                ///< Deleted completion ID.
+        bool deleted{};                                  ///< Whether the completion was deleted.
+        std::string object{ "chat.completion.deleted" }; ///< Object type.
+    };
+
+    /**
+     * @brief Message of a stored completion, returned by the messages list endpoint.
+     */
+    struct ChatCompletionStoreMessage {
+        std::string id{};                                                      ///< Message ID.
+        std::string role{};                                                    ///< Author role.
+        std::optional<std::string> content{};                                  ///< Text content, if any.
+        std::optional<std::vector<ChatCompletionContentPart>> content_parts{}; ///< Text and image parts, if any.
+        std::optional<std::string> name{};                                     ///< Participant name, if any.
+        std::optional<std::string> refusal{};                                  ///< Refusal message, if any.
+        std::vector<ChatCompletionMessageToolCall> tool_calls{};               ///< Tool calls of assistant messages.
+        std::optional<std::string> tool_call_id{};                             ///< Answered call of tool messages.
+    };
+
+    /**
+     * @brief Query parameters of `GET /chat/completions`; only completions created with store=true are listed.
+     */
+    struct ChatCompletionListParams {
+        std::optional<std::string> after{};                           ///< Cursor: ID of the last item of the previous page.
+        std::optional<std::int64_t> limit{};                          ///< Page size.
+        std::optional<std::map<std::string, std::string>> metadata{}; ///< Filter by metadata key/value pairs.
+        std::optional<std::string> model{};                           ///< Filter by model.
+        std::optional<std::string> order{};                           ///< "asc" or "desc".
+    };
+
+    /**
+     * @brief Query parameters of `GET /chat/completions/{id}/messages`.
+     */
+    struct ChatCompletionMessageListParams {
+        std::optional<std::string> after{};  ///< Cursor: ID of the last message of the previous page.
+        std::optional<std::int64_t> limit{}; ///< Page size.
+        std::optional<std::string> order{};  ///< "asc" or "desc".
+    };
+
+    // ----------------------------------------------------------------------------------------
+    // Message helpers
+    // ----------------------------------------------------------------------------------------
+
+    /**
+     * @brief Create a developer message.
+     * @param content Instructions.
+     */
+    [[nodiscard]] auto developer_message(std::string content) -> ChatCompletionMessageParam;
+
+    /**
+     * @brief Create a system message.
+     * @param content Instructions.
+     */
+    [[nodiscard]] auto system_message(std::string content) -> ChatCompletionMessageParam;
+
+    /**
+     * @brief Create a user message with text content.
+     * @param content Message text.
+     */
+    [[nodiscard]] auto user_message(std::string content) -> ChatCompletionMessageParam;
+
+    /**
+     * @brief Create a user message with multimodal content.
+     * @param parts Content parts in order.
+     */
+    [[nodiscard]] auto user_message(std::vector<ChatCompletionContentPart> parts) -> ChatCompletionMessageParam;
+
+    /**
+     * @brief Create an assistant message with text content.
+     * @param content Message text.
+     */
+    [[nodiscard]] auto assistant_message(std::string content) -> ChatCompletionMessageParam;
+
+    /**
+     * @brief Convert a generated message, including its tool calls, into a request message.
+     * @param message Message from a ChatCompletion choice.
+     */
+    [[nodiscard]] auto assistant_message(ChatCompletionMessage const& message) -> ChatCompletionMessageParam;
+
+    /**
+     * @brief Create a tool result message.
+     * @param tool_call_id ID of the answered tool call.
+     * @param content Tool output.
+     */
+    [[nodiscard]] auto tool_message(std::string tool_call_id, std::string content) -> ChatCompletionMessageParam;
+
+} // namespace moai
+
+namespace moai::detail {
+
+    /**
+     * @brief Serialize create parameters, without the `stream` field.
+     */
+    [[nodiscard]] auto encode_create_params(ChatCompletionCreateParams const& params) -> Json;
+
+    /**
+     * @brief Decode a `chat.completion` object; throws DecodeFailure on type mismatches.
+     */
+    [[nodiscard]] auto decode_chat_completion(JsonReader const& reader) -> ChatCompletion;
+
+    /**
+     * @brief Decode a `chat.completion.chunk` object; throws DecodeFailure on type mismatches.
+     */
+    [[nodiscard]] auto decode_chat_completion_chunk(JsonReader const& reader) -> ChatCompletionChunk;
+
+    /**
+     * @brief Decode a deletion result; throws DecodeFailure on type mismatches.
+     */
+    [[nodiscard]] auto decode_chat_completion_deleted(JsonReader const& reader) -> ChatCompletionDeleted;
+
+    /**
+     * @brief Decode a stored message; throws DecodeFailure on type mismatches.
+     */
+    [[nodiscard]] auto decode_store_message(JsonReader const& reader) -> ChatCompletionStoreMessage;
+
+    /**
+     * @brief Decode a cursor page whose items use the given decoder.
+     */
+    template <typename Decode>
+    [[nodiscard]] auto decode_cursor_page(JsonReader const& reader, Decode&& decode) -> CursorPage<std::invoke_result_t<Decode&, JsonReader const&>> {
+        reader.RequireObject();
+        return CursorPage<std::invoke_result_t<Decode&, JsonReader const&>>{
+            .data = reader.ArrayOr("data", std::forward<Decode>(decode)),
+            .first_id = reader.OptionalString("first_id"),
+            .last_id = reader.OptionalString("last_id"),
+            .has_more = reader.OptionalBool("has_more").value_or(false),
+            .object = reader.OptionalString("object").value_or("list"),
+        };
+    }
+
+} // namespace moai::detail

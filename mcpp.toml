@@ -20,3 +20,6 @@ ldflags = ["-fsanitize=address,undefined"]
 
 [dependencies]
 mcr = { git = "https://github.com/yizhinailong/mcr.git", tag = "v0.3.0" }
+
+[dependencies.nlohmann]
+json = "3.12.0"

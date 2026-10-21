@@ -9,24 +9,89 @@
 
 ## 当前状态
 
-当前版本为 `0.1.0`，处于项目初始化阶段。已具备 `import moai;` 入口、自动生成的版本信息、
-mcr 的固定版本 URL 依赖、依赖集成测试，以及 Windows/Linux CI 和 Doxygen 配置。
-**OpenAI 请求接口尚未实现**；目前不能通过 moai 调用模型。
+当前版本为 `0.1.0`。已实现核心层和 Chat Completions 的同步调用、SSE 流式及已存储补全的管理接口，
+可以通过 `import moai;` 调用模型。线程池异步和协程接口尚未实现，其他资源也尚未开始。
 
 liboai 已归档，本项目借鉴其代码分层，具体端点和行为以 OpenAI 官方资料为准。
-以下是后续开发顺序，并非已支持的功能清单：
 
-| 阶段 | 计划内容 | 状态 |
+| 阶段 | 内容 | 状态 |
 | --- | --- | --- |
-| 核心层 | 客户端配置、API key、base URL、JSON、错误映射、超时和重试 | 待实现 |
-| Chat Completions | 创建、SSE 流式、线程池异步与协程、取消、工具调用、结构化输出、已存储补全的管理与分页 | 待实现 |
+| 核心层 | 客户端配置、API key、base URL、环境变量、JSON、错误映射、超时、重试、取消 | 已实现 |
+| Chat Completions | `Create`、`CreateStream`、流式分块合并、工具调用、结构化输出参数、多模态消息 | 已实现 |
+| Chat Completions | 已存储补全的 `Retrieve` / `Update` / `List` / `Delete` / `messages.List` 及分页 | 已实现 |
+| Chat Completions | 线程池异步与协程接口、对话历史辅助 | 待实现 |
 | 首批扩展 | Models、Responses | 待实现 |
 | 常用资源 | Embeddings、Images、Audio、Files、Uploads、Moderations | 待实现 |
 | 扩展资源 | Conversations、Batches、Fine-tuning、Vector Stores | 待实现 |
 | 后续评估 | Realtime/WebSocket、Webhooks 及其他官方资源 | 待设计 |
 
-首个里程碑是 Chat Completions，核心层随之实现；OpenAI 推荐用于新功能的 Responses 紧随其后。
-多模态、音频等参数随相应资源逐步实现，具体字段以官方 API 为准。
+OpenAI 推荐用于新功能的 Responses 排在 Chat Completions 之后。尚未建模的新参数可通过
+`RequestOptions::extra_body` 发送，响应中的未建模字段可从 `ChatCompletion::raw` 读取。
+
+## 快速开始
+
+```cpp
+import std;
+import moai;
+
+auto main() -> int {
+    auto client = moai::Client::Create(); // 读取 OPENAI_API_KEY，可选 OPENAI_BASE_URL
+    if (!client) {
+        std::println("{}", client.error());
+        return 1;
+    }
+    auto completion = client->chat.completions.Create({
+        .model = "gpt-5-mini",
+        .messages = {
+            moai::developer_message("Answer in one sentence."),
+            moai::user_message("What is a C++ module?"),
+        },
+    });
+    if (!completion) {
+        std::println("{}", completion.error()); // 例如 "RateLimit (HTTP 429, request req_...): ..."
+        return 1;
+    }
+    std::println("{}", completion->choices.at(0).message.content.value_or(""));
+}
+```
+
+流式输出通过回调逐块交付，`ChatCompletionAccumulator` 可将分块合并为完整结果：
+
+```cpp
+moai::ChatCompletionAccumulator accumulator;
+auto result = client->chat.completions.CreateStream(
+    { .model = "gpt-5-mini", .messages = { moai::user_message("Hi") } },
+    [&](moai::ChatCompletionChunk const& chunk) {
+        accumulator.Add(chunk);
+        for (auto const& choice : chunk.choices) {
+            std::print("{}", choice.delta.content.value_or(""));
+        }
+        return true; // 返回 false 会停止流并得到 ErrorKind::Cancelled
+    });
+```
+
+要点：
+
+- **配置**：`ClientOptions` 可设置 `api_key`、`organization`、`project`、`base_url`、`timeout`
+  （默认 600 s，限制整个传输）、`connect_timeout`（默认 5 s）、`max_retries`（默认 2）、
+  默认请求头、默认查询参数和代理。未设置时读取 `OPENAI_API_KEY`、`OPENAI_BASE_URL`、
+  `OPENAI_ORG_ID`、`OPENAI_PROJECT_ID`。
+- **单次请求**：`RequestOptions` 可覆盖超时和重试次数，追加请求头、查询参数、`extra_body`，
+  并通过 `std::stop_token` 取消传输或重试等待。
+- **错误**：所有调用返回 `moai::Result<T>`（`std::expected<T, moai::Error>`），库本身不抛异常。
+  `ErrorKind` 区分参数错误、请求准备失败、连接、超时、取消、各 HTTP 状态、解码和流错误；
+  HTTP 错误保留状态码、`x-request-id` 及 API 的 `message` / `type` / `code` / `param`。
+  流式回调抛出的异常会在传输停止后原样传出。
+- **重试**：连接错误、超时、408、409、429 和 5xx 默认重试，遵循 `x-should-retry`、
+  `retry-after-ms` 和 `retry-after`，否则按 0.5 s 起的指数退避；流式请求只在交付首个分块前重试。
+- **线程**：`Client` 创建后配置不可变，可复制，可在多个线程中并发使用；每个请求使用独立的 mcr
+  Session，并共享连接池。
+- **curl 生命周期**：moai 不会关闭 libcurl。需要确定的退出清理时，可在 `main()` 开头创建
+  `mcr::GlobalInit` 守卫（需 `import mcr;`），守卫必须比所有客户端和进行中的请求存活更久。
+- **JSON**：自由结构字段（工具参数、JSON Schema、`extra_body`、`raw`）使用 `moai::Json`，
+  即 `nlohmann::json`。花括号会构造数组，复制 Json 值时请用 `=` 或圆括号初始化。
+
+完整示例见 [example/](example/)：`chat_basic`、`chat_stream`、`chat_tools`（工具调用循环）。
 
 ## 环境与依赖
 
@@ -43,11 +108,14 @@ mcpp toolchain default llvm@23.1.3
 mcpp self doctor
 ```
 
-[mcpp.toml](mcpp.toml) 通过 Git URL 直接引入 mcr，并固定到 `v0.3.0`：
+[mcpp.toml](mcpp.toml) 通过 Git URL 直接引入 mcr 并固定到 `v0.3.0`，JSON 使用 mcpp 索引中的 nlohmann/json：
 
 ```toml
 [dependencies]
 mcr = { git = "https://github.com/yizhinailong/mcr.git", tag = "v0.3.0" }
+
+[dependencies.nlohmann]
+json = "3.12.0"
 ```
 
 这是 mcpp 的 [Git 依赖语法](https://github.com/mcpp-community/mcpp/blob/v2026.10.21.1/docs/05-dependencies.md)，
@@ -56,13 +124,13 @@ mcr = { git = "https://github.com/yizhinailong/mcr.git", tag = "v0.3.0" }
 
 | 依赖 | 版本 | 来源与职责 |
 | --- | --- | --- |
-| mcr | `0.3.0` | 直接 Git 依赖；HTTP、异步、Multipart、SSE 等传输能力 |
+| mcr | `0.3.0` | 直接 Git 依赖；HTTP、连接池、SSE 解析等传输能力 |
+| nlohmann/json | `3.12.0` | 直接依赖，以 `import nlohmann.json;` 模块形式提供；请求序列化和响应解析 |
 | curl | `8.21.0` | mcr 的传递依赖，由 mcpp 管理 |
 | OpenSSL | `3.5.1` | mcr 在 Linux/macOS 上声明的传递依赖 |
 
 平台 TLS 配置由 mcr 管理：Windows 使用 Schannel，Linux/macOS 启用 OpenSSL 上下文支持。
-本仓库无需重复声明 curl、OpenSSL 或 `MCR_SSL_CTX_OPENSSL`。mcr 不包含 JSON 库，
-moai 的 JSON 适配会在实现核心层时引入。
+本仓库无需重复声明 curl、OpenSSL 或 `MCR_SSL_CTX_OPENSSL`。
 
 ## 构建与检查
 
@@ -73,8 +141,9 @@ mcpp build
 mcpp test --timeout 90
 ```
 
-测试会导入 moai 和 mcr，创建 curl 初始化守卫及 HTTP Session，验证传递依赖能正确链接和初始化。
-测试不会发送网络请求，不需要 OpenAI API key。根项目是库，没有可供 `mcpp run` 执行的默认程序。
+测试使用 `tests/fixtures/mock_server.hpp` 中的本地回环 HTTP 服务返回预设响应，覆盖客户端配置、
+请求序列化、响应解码、错误映射、已存储补全、SSE 流式、重试、超时和取消。
+测试不访问外部网络，不需要 OpenAI API key。根项目是库，没有可供 `mcpp run` 执行的默认程序。
 
 生成编辑器编译数据库：
 
@@ -88,59 +157,58 @@ Linux 上也可使用与 CI 相同的 ASan/UBSan 配置：
 mcpp test --profile sanitize --timeout 90
 ```
 
+示例是独立的 mcpp 项目，通过路径依赖引用 moai；运行时需要真实或兼容的服务：
+
+```sh
+cd example
+mcpp build
+mcpp run chat_basic -- gpt-5-mini
+```
+
 ## 在其他项目中导入
 
-初始化阶段可在消费项目的 `mcpp.toml` 中引用本地 moai，路径相对于消费项目的配置文件：
+在消费项目的 `mcpp.toml` 中引用本地 moai，路径相对于消费项目的配置文件：
 
 ```toml
 [dependencies]
 moai = { path = "../moai" }
 ```
 
-在消费项目的 `src/main.cpp` 中读取当前已提供的版本信息，然后运行 `mcpp run`：
-
-```cpp
-import std;
-import moai;
-
-auto main() -> int {
-    std::println("moai {}", moai::VERSION);
-}
-```
-
-`moai::VERSION_MAJOR`、`VERSION_MINOR`、`VERSION_PATCH` 和 `VERSION_NUM` 也可使用。
-版本常量由 `build.mcpp` 从 `[package].version` 自动生成；`VERSION_NUM` 为 `0xAABBCC` 格式。
-moai 的版本与依赖 mcr 的版本独立。
+之后即可按上文「快速开始」使用。`moai::VERSION`、`VERSION_MAJOR`、`VERSION_MINOR`、
+`VERSION_PATCH` 和 `VERSION_NUM` 由 `build.mcpp` 从 `[package].version` 自动生成；
+`VERSION_NUM` 为 `0xAABBCC` 格式。moai 的版本与依赖 mcr 的版本独立。
 
 ## 代码组织
-
-当前已存在的主要文件：
 
 ```text
 moai/
 ├── src/
-│   └── moai.cppm             # 公开模块入口
+│   ├── moai.cppm                   # 公开模块入口，重新导出公开分区
+│   ├── client.cppm                 # moai:client，统一客户端
+│   ├── core/
+│   │   ├── config.cppm             # moai:config，ClientOptions、RequestOptions
+│   │   ├── error.cppm              # moai:error，Error、ErrorKind、Result
+│   │   ├── json.cppm               # moai:json，Json 别名及内部解码辅助
+│   │   ├── pagination.cppm         # moai:pagination，CursorPage
+│   │   ├── transport.cppm / .cpp   # moai:transport（内部），mcr 请求、重试、错误映射、SSE
+│   └── components/chat/
+│       ├── types.cppm / .cpp       # moai:chat_types，请求/响应类型及序列化
+│       ├── completions.cppm / .cpp # moai:chat_completions，Chat Completions 资源
+│       └── accumulator.cppm / .cpp # moai:chat_accumulator，流式分块合并
 ├── tests/
-│   └── test_dependency.cpp   # mcr/curl 依赖集成检查
-├── .github/workflows/       # 构建、测试、文档及发布配置
-├── mcpp.toml                # 包元数据、依赖和构建配置
-├── build.mcpp               # 生成 moai:version 分区
-├── Doxyfile                 # API 文档配置
-└── AGENTS.md                # 开发约定
+│   ├── fixtures/mock_server.hpp    # 本地回环 mock 服务与断言辅助
+│   └── test_*.cpp                  # 独立测试程序
+├── example/                        # 独立消费 moai 的示例项目
+├── .github/workflows/              # 构建、测试、文档及发布配置
+├── mcpp.toml                       # 包元数据、依赖和构建配置
+├── build.mcpp                      # 生成 moai:version 分区
+├── Doxyfile                        # API 文档配置
+└── AGENTS.md                       # 开发约定
 ```
 
-后续实现按下面的结构逐步增加，以下路径当前尚未创建：
-
-| 路径 | 职责 |
-| --- | --- |
-| `src/client.cppm` | 统一客户端，组合配置、传输和各资源组件 |
-| `src/core/` | 认证、配置、JSON、传输封装、错误、分页、流式基础设施 |
-| `src/components/` | 按官方 API 资源拆分的组件，如 Chat Completions、Models、Responses |
-| `example/` | 独立消费 moai 的可运行示例 |
-| `docs/` | 中文使用文档与设计说明 |
-
-公共接口由 `src/moai.cppm` 统一导出。资源组件共享核心层，通过 mcr 执行 HTTP 请求。
-SDK 层负责序列化、资源语义和错误映射，包括区分请求准备失败、传输失败及 HTTP/API 错误。
+公共接口由 `src/moai.cppm` 统一导出，传输分区只在库内部使用。资源组件只处理参数、路径、
+序列化和响应映射；认证、超时、重试、连接复用和流式解析位于核心层，底层 HTTP 由 mcr 执行。
+`docs/` 中文详细文档尚未创建。
 
 ## 文档与贡献
 
